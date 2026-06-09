@@ -183,26 +183,78 @@ export interface TimelineEvent {
 export interface DailyReport {
   id: string;
   date: Date;
+  generatedAt: Date;
   personnelAttendance: {
     total: number;
     onDuty: number;
     attendanceRate: number;
+    details: {
+      personnelId: string;
+      name: string;
+      checkinTime: Date;
+      status: string;
+    }[];
   };
   incidents: {
     total: number;
     completed: number;
     byLevel: Record<IncidentLevel, number>;
+    details: {
+      id: string;
+      title: string;
+      level: IncidentLevel;
+      status: string;
+      reportTime: Date;
+      handlerName?: string;
+    }[];
+    keyEvents: string[];
   };
   patrols: {
     total: number;
     completed: number;
     completionRate: number;
+    totalCheckins: number;
+    abnormalCheckins: number;
+    details: {
+      id: string;
+      routeName: string;
+      personnelName: string;
+      status: string;
+      checkinCount: number;
+    }[];
   };
   equipment: {
     borrowed: number;
     returned: number;
     lowStock: number;
+    details: {
+      id: string;
+      equipmentName: string;
+      type: 'borrow' | 'return';
+      personnelName: string;
+      quantity: number;
+      time: Date;
+    }[];
+    lowStockItems: {
+      id: string;
+      name: string;
+      available: number;
+      warningThreshold: number;
+    }[];
   };
+  hiddenDangers: {
+    total: number;
+    pending: number;
+    resolved: number;
+    details: {
+      id: string;
+      title: string;
+      pointName: string;
+      status: string;
+      reportTime: Date;
+    }[];
+  };
+  timelineEvents: TimelineEvent[];
   summary: string;
 }
 

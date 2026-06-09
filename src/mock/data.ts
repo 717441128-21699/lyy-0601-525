@@ -184,20 +184,82 @@ export const mockDailyReports: DailyReport[] = [
   {
     id: 'dr1',
     date: today,
-    personnelAttendance: { total: 12, onDuty: 10, attendanceRate: 95.2 },
-    incidents: { total: 5, completed: 2, byLevel: { red: 1, orange: 1, yellow: 2, blue: 1 } },
-    patrols: { total: 4, completed: 1, completionRate: 75 },
-    equipment: { borrowed: 6, returned: 1, lowStock: 1 },
+    generatedAt: new Date(today.getTime() + 14 * 3600000),
+    personnelAttendance: { 
+      total: 12, 
+      onDuty: 10, 
+      attendanceRate: 95.2,
+      details: [
+        { personnelId: 'p1', name: '张伟', checkinTime: new Date(today.getTime() + 7 * 3600000), status: 'on-duty' },
+        { personnelId: 'p2', name: '李强', checkinTime: new Date(today.getTime() + 7 * 3600000 + 300000), status: 'patrol' },
+        { personnelId: 'p3', name: '王勇', checkinTime: new Date(today.getTime() + 7 * 3600000 + 600000), status: 'on-duty' },
+        { personnelId: 'p4', name: '刘洋', checkinTime: new Date(today.getTime() + 7 * 3600000 + 900000), status: 'dispatched' },
+        { personnelId: 'p5', name: '陈军', checkinTime: new Date(today.getTime() + 7 * 3600000 + 1200000), status: 'on-duty' },
+        { personnelId: 'p7', name: '孙涛', checkinTime: new Date(today.getTime() + 7 * 3600000 + 1500000), status: 'patrol' },
+        { personnelId: 'p8', name: '周杰', checkinTime: new Date(today.getTime() + 7 * 3600000 + 1800000), status: 'on-duty' },
+        { personnelId: 'p9', name: '吴鹏', checkinTime: new Date(today.getTime() + 7 * 3600000 + 2100000), status: 'on-duty' },
+        { personnelId: 'p10', name: '郑浩', checkinTime: new Date(today.getTime() + 7 * 3600000 + 2400000), status: 'on-duty' },
+        { personnelId: 'p11', name: '马超', checkinTime: new Date(today.getTime() + 7 * 3600000 + 2700000), status: 'on-duty' },
+      ]
+    },
+    incidents: { 
+      total: 5, 
+      completed: 2, 
+      byLevel: { red: 1, orange: 1, yellow: 2, blue: 1 },
+      details: [
+        { id: 'i1', title: '观众突发疾病', level: 'red', status: 'processing', reportTime: new Date(now.getTime() - 600000), handlerName: '刘洋' },
+        { id: 'i2', title: '人群聚集拥挤', level: 'orange', status: 'processing', reportTime: new Date(now.getTime() - 1200000), handlerName: '王勇' },
+        { id: 'i3', title: '儿童走失', level: 'yellow', status: 'completed', reportTime: new Date(now.getTime() - 1800000), handlerName: '陈军' },
+        { id: 'i4', title: '物品遗失', level: 'blue', status: 'completed', reportTime: new Date(now.getTime() - 2400000), handlerName: '张伟' },
+        { id: 'i5', title: '设备故障', level: 'yellow', status: 'pending', reportTime: new Date(now.getTime() - 300000) },
+      ],
+      keyEvents: [
+        '10:00 - 儿童走失事件，15分钟内成功找到',
+        '11:00 - 东出入口人群聚集，及时疏散无意外',
+        '12:00 - 观众突发疾病，已联系急救处理中',
+      ]
+    },
+    patrols: { 
+      total: 4, 
+      completed: 1, 
+      completionRate: 75,
+      totalCheckins: 10,
+      abnormalCheckins: 1,
+      details: [
+        { id: 'pt1', routeName: '主会场内环巡逻', personnelName: '李强', status: 'in-progress', checkinCount: 2 },
+        { id: 'pt2', routeName: '外围巡逻路线', personnelName: '孙涛', status: 'completed', checkinCount: 5 },
+        { id: 'pt3', routeName: '展区巡逻', personnelName: '赵磊', status: 'pending', checkinCount: 0 },
+        { id: 'pt4', routeName: '主会场内环巡逻', personnelName: '王勇', status: 'in-progress', checkinCount: 3 },
+      ]
+    },
+    equipment: { 
+      borrowed: 6, 
+      returned: 1, 
+      lowStock: 1,
+      details: [
+        { id: 'el1', equipmentName: '对讲机', type: 'borrow', personnelName: '李强', quantity: 1, time: new Date(now.getTime() - 28800000) },
+        { id: 'el2', equipmentName: '对讲机', type: 'borrow', personnelName: '王勇', quantity: 1, time: new Date(now.getTime() - 28800000) },
+        { id: 'el3', equipmentName: '防暴盾牌', type: 'borrow', personnelName: '刘洋', quantity: 1, time: new Date(now.getTime() - 28800000) },
+        { id: 'el4', equipmentName: '强光手电', type: 'borrow', personnelName: '陈军', quantity: 2, time: new Date(now.getTime() - 14400000) },
+        { id: 'el5', equipmentName: '对讲机', type: 'return', personnelName: '赵磊', quantity: 1, time: new Date(now.getTime() - 7200000) },
+        { id: 'el6', equipmentName: '急救包', type: 'borrow', personnelName: '刘洋', quantity: 1, time: new Date(now.getTime() - 3600000) },
+      ],
+      lowStockItems: [
+        { id: 'e4', name: '强光手电', available: 3, warningThreshold: 10 },
+      ]
+    },
+    hiddenDangers: {
+      total: 3,
+      pending: 1,
+      resolved: 1,
+      details: [
+        { id: 'hd1', title: '电线裸露', pointName: '电器设备间', status: 'processing', reportTime: new Date(now.getTime() - 3600000) },
+        { id: 'hd2', title: '护栏松动', pointName: '舞台左侧', status: 'resolved', reportTime: new Date(now.getTime() - 7200000) },
+        { id: 'hd3', title: '安检设备故障', pointName: '主入口安检', status: 'pending', reportTime: new Date(now.getTime() - 1800000) },
+      ]
+    },
+    timelineEvents: mockTimelineEvents,
     summary: '今日活动整体平稳，发生5起事件，其中2起已处置完成。主要问题集中在东出入口人群聚集和医疗急救事件，需要加强重点区域人员部署。物资方面强光手电库存不足，需及时补充。',
-  },
-  {
-    id: 'dr2',
-    date: new Date(today.getTime() - 86400000),
-    personnelAttendance: { total: 12, onDuty: 11, attendanceRate: 98.5 },
-    incidents: { total: 3, completed: 3, byLevel: { red: 0, orange: 1, yellow: 1, blue: 1 } },
-    patrols: { total: 6, completed: 6, completionRate: 100 },
-    equipment: { borrowed: 8, returned: 7, lowStock: 0 },
-    summary: '昨日演练活动顺利完成，所有事件均妥善处置。巡逻任务100%完成，物资领用归还有序。',
   },
 ];
 

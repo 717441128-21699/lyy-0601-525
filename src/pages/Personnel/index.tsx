@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Users, Search, Filter, Plus, Phone, MapPin, Clock, CheckCircle, XCircle, UserPlus, LogIn } from 'lucide-react';
+import { Users, Search, Filter, Plus, Phone, MapPin, Clock, CheckCircle, XCircle, UserPlus, LogIn, ArrowRightLeft } from 'lucide-react';
 import { useAppStore } from '@/store';
 import { getStatusColor, getStatusBgColor, getStatusText, formatTime, formatDate, generateId, cn } from '@/utils';
 import type { Personnel } from '@/types';
@@ -17,6 +17,7 @@ export default function Personnel() {
     getAreaById,
     updatePersonnel,
     addAttendance,
+    addActivityLog,
   } = useAppStore();
 
   const [searchTerm, setSearchTerm] = useState('');
@@ -25,7 +26,9 @@ export default function Personnel() {
   const [selectedPersonnel, setSelectedPersonnel] = useState<Personnel | null>(null);
   const [showDetailModal, setShowDetailModal] = useState(false);
   const [showSignInModal, setShowSignInModal] = useState(false);
+  const [showTransferModal, setShowTransferModal] = useState(false);
   const [activeTab, setActiveTab] = useState<'list' | 'attendance'>('list');
+  const [selectedAreaId, setSelectedAreaId] = useState('');
 
   const areas = useAppStore.getState().areas;
 
@@ -61,6 +64,27 @@ export default function Personnel() {
   const handlePersonnelClick = (person: Personnel) => {
     setSelectedPersonnel(person);
     setShowDetailModal(true);
+  };
+
+  const handleTransfer = (person: Personnel) => {
+    if (!selectedAreaId) return;
+    
+    const oldArea = getAreaById(person.areaId);
+    const newArea = getAreaById(selectedAreaId);
+    
+    updatePersonnel(person.id, { areaId: selectedAreaId });
+    addActivityLog({
+      id: generateId(),
+      type: 'attendance',
+      title: '人员岗位调整',
+      description: `${person.name} 从 ${oldArea?.name || '未知区域'} 调整到 ${newArea?.name || '未知区域'}`,
+      time: new Date(),
+      relatedId: person.id,
+    });
+    
+    setSelectedPersonnel({ ...person, areaId: selectedAreaId });
+    setSelectedAreaId('');
+    setShowTransferModal(false);
   };
 
   return (
@@ -292,6 +316,17 @@ export default function Personnel() {
                                 签退
                               </button>
                             )}
+                            <button
+                              onClick={() => {
+                                setSelectedPersonnel(person);
+                                setSelectedAreaId(person.areaId);
+                                setShowTransferModal(true);
+                              }}
+                              className="btn-primary text-xs py-1 px-2 flex items-center gap-1"
+                            >
+                              <ArrowRightLeft className="w-3 h-3" />
+                              调岗
+                            </button>
                           </div>
                         </td>
                       </tr>
@@ -434,7 +469,16 @@ export default function Personnel() {
                   签退离岗
                 </button>
               )}
-              <button className="btn-outline flex-1">岗位调整</button>
+              <button
+                onClick={() => {
+                  setSelectedAreaId(selectedPersonnel.areaId);
+                  setShowTransferModal(true);
+                }}
+                className="btn-primary flex-1 flex items-center justify-center gap-2"
+              >
+                <ArrowRightLeft className="w-4 h-4" />
+                调整岗位
+              </button>
             </div>
           </div>
         )}
@@ -483,6 +527,93 @@ export default function Personnel() {
               )}
               <button
                 onClick={() => setShowSignInModal(false)}
+                className="btn-outline flex-1"
+              >
+                取消
+              </button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      <Modal
+        isOpen={showTransferModal}
+        onClose={() => {
+          setShowTransferModal(false);
+          setSelectedAreaId('');
+        }}
+        title="调整岗位"
+        size="md"
+      >
+        {selectedPersonnel && (
+          <div className="space-y-4">
+            <div className="flex items-center gap-4 p-4 bg-dark-800 rounded-lg">
+              <img
+                src={selectedPersonnel.avatar}
+                alt={selectedPersonnel.name}
+                className="w-14 h-14 rounded-full bg-dark-700"
+              />
+              <div>
+                <h4 className="text-lg font-semibold text-white">{selectedPersonnel.name}</h4>
+                <p className="text-sm text-dark-400">{selectedPersonnel.position}</p>
+                <p className="text-xs text-dark-500 flex items-center gap-1 mt-1">
+                  <MapPin className="w-3 h-3" />
+                  当前区域: {getAreaById(selectedPersonnel.areaId)?.name}
+                </p>
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-dark-300 mb-2">
+                调整至区域
+              </label>
+              <select
+                value={selectedAreaId}
+                onChange={(e) => setSelectedAreaId(e.target.value)}
+                className="w-full px-4 py-3 bg-dark-900 border border-dark-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-primary-500"
+              >
+                <option value="">请选择目标区域</option>
+                {areas.map((area) => (
+                  <option key={area.id} value={area.id}>
+                    {area.name} ({area.type})
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {selectedAreaId && selectedAreaId !== selectedPersonnel.areaId && (
+              <div className="bg-primary-900/20 border border-primary-700/30 p-4 rounded-lg">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 bg-primary-500/20 rounded-lg">
+                    <ArrowRightLeft className="w-5 h-5 text-primary-400" />
+                  </div>
+                  <div>
+                    <p className="text-sm text-white font-medium">
+                      {getAreaById(selectedPersonnel.areaId)?.name}
+                      <span className="mx-2 text-primary-400">→</span>
+                      {getAreaById(selectedAreaId)?.name}
+                    </p>
+                    <p className="text-xs text-dark-400 mt-1">
+                      确认后将更新该人员的负责区域
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <div className="flex gap-3 pt-4 border-t border-dark-700">
+              <button
+                onClick={() => handleTransfer(selectedPersonnel)}
+                disabled={!selectedAreaId || selectedAreaId === selectedPersonnel.areaId}
+                className="btn-primary flex-1 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                确认调整
+              </button>
+              <button
+                onClick={() => {
+                  setShowTransferModal(false);
+                  setSelectedAreaId('');
+                }}
                 className="btn-outline flex-1"
               >
                 取消

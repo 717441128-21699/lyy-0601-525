@@ -1,18 +1,22 @@
-export function formatTime(date: Date): string {
-  return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+function toDate(date: Date | string): Date {
+  return typeof date === 'string' ? new Date(date) : date;
 }
 
-export function formatDate(date: Date): string {
-  return date.toLocaleDateString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' });
+export function formatTime(date: Date | string): string {
+  return toDate(date).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 }
 
-export function formatDateTime(date: Date): string {
+export function formatDate(date: Date | string): string {
+  return toDate(date).toLocaleDateString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' });
+}
+
+export function formatDateTime(date: Date | string): string {
   return `${formatDate(date)} ${formatTime(date)}`;
 }
 
-export function getTimeAgo(date: Date): string {
+export function getTimeAgo(date: Date | string): string {
   const now = new Date();
-  const diff = now.getTime() - date.getTime();
+  const diff = now.getTime() - toDate(date).getTime();
   const minutes = Math.floor(diff / 60000);
   const hours = Math.floor(diff / 3600000);
   const days = Math.floor(diff / 86400000);
@@ -23,8 +27,8 @@ export function getTimeAgo(date: Date): string {
   return `${days}天前`;
 }
 
-export function getDuration(start: Date, end: Date): string {
-  const diff = end.getTime() - start.getTime();
+export function getDuration(start: Date | string, end: Date | string): string {
+  const diff = toDate(end).getTime() - toDate(start).getTime();
   const hours = Math.floor(diff / 3600000);
   const minutes = Math.floor((diff % 3600000) / 60000);
   
