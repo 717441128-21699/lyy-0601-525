@@ -1,0 +1,496 @@
+import { useState } from 'react';
+import { Users, Search, Filter, Plus, Phone, MapPin, Clock, CheckCircle, XCircle, UserPlus, LogIn } from 'lucide-react';
+import { useAppStore } from '@/store';
+import { getStatusColor, getStatusBgColor, getStatusText, formatTime, formatDate, generateId, cn } from '@/utils';
+import type { Personnel } from '@/types';
+import Modal from '@/components/Modal';
+import StatCard from '@/components/StatCard';
+import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts';
+
+const STATUS_COLORS = ['#10B981', '#3B82F6', '#F59E0B', '#EAB308', '#64748B'];
+
+export default function Personnel() {
+  const {
+    personnel,
+    attendance,
+    getPersonnelAttendance,
+    getAreaById,
+    updatePersonnel,
+    addAttendance,
+  } = useAppStore();
+
+  const [searchTerm, setSearchTerm] = useState('');
+  const [statusFilter, setStatusFilter] = useState<string>('all');
+  const [areaFilter, setAreaFilter] = useState<string>('all');
+  const [selectedPersonnel, setSelectedPersonnel] = useState<Personnel | null>(null);
+  const [showDetailModal, setShowDetailModal] = useState(false);
+  const [showSignInModal, setShowSignInModal] = useState(false);
+  const [activeTab, setActiveTab] = useState<'list' | 'attendance'>('list');
+
+  const areas = useAppStore.getState().areas;
+
+  const filteredPersonnel = personnel.filter((p) => {
+    const matchesSearch = p.name.includes(searchTerm) || p.position.includes(searchTerm) || p.phone.includes(searchTerm);
+    const matchesStatus = statusFilter === 'all' || p.status === statusFilter;
+    const matchesArea = areaFilter === 'all' || p.areaId === areaFilter;
+    return matchesSearch && matchesStatus && matchesArea;
+  });
+
+  const statusStats = [
+    { name: '在岗', value: personnel.filter((p) => p.status === 'on-duty').length, color: '#10B981' },
+    { name: '巡逻', value: personnel.filter((p) => p.status === 'patrol').length, color: '#3B82F6' },
+    { name: '调度中', value: personnel.filter((p) => p.status === 'dispatched').length, color: '#F59E0B' },
+    { name: '休息', value: personnel.filter((p) => p.status === 'rest').length, color: '#EAB308' },
+    { name: '离岗', value: personnel.filter((p) => p.status === 'off-duty').length, color: '#64748B' },
+  ];
+
+  const handleSignIn = (person: Personnel, type: 'on' | 'off') => {
+    const location = getAreaById(person.areaId)?.name || '未知区域';
+    addAttendance({
+      id: generateId(),
+      personnelId: person.id,
+      checkinTime: new Date(),
+      type,
+      location,
+    });
+    updatePersonnel(person.id, { status: type === 'on' ? 'on-duty' : 'off-duty' });
+    setShowSignInModal(false);
+    setShowDetailModal(false);
+  };
+
+  const handlePersonnelClick = (person: Personnel) => {
+    setSelectedPersonnel(person);
+    setShowDetailModal(true);
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <StatCard
+          title="总人数"
+          value={personnel.length}
+          icon={Users}
+          color="blue"
+          className="animate-stagger-1"
+        />
+        <StatCard
+          title="在岗人数"
+          value={personnel.filter((p) => p.status === 'on-duty').length}
+          icon={CheckCircle}
+          color="green"
+          className="animate-stagger-2"
+        />
+        <StatCard
+          title="巡逻中"
+          value={personnel.filter((p) => p.status === 'patrol').length}
+          icon={MapPin}
+          color="orange"
+          className="animate-stagger-3"
+        />
+        <StatCard
+          title="今日签到率"
+          value={`${Math.round((personnel.filter((p) => p.status !== 'off-duty').length / personnel.length) * 100)}%`}
+          icon={Clock}
+          color="purple"
+          className="animate-stagger-4"
+        />
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+        <div className="lg:col-span-1">
+          <div className="card card-hover animate-fade-in-up opacity-0">
+            <div className="p-4 border-b border-dark-700">
+              <h3 className="text-lg font-semibold text-white">人员状态分布</h3>
+            </div>
+            <div className="p-4 h-64">
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie
+                    data={statusStats}
+                    cx="50%"
+                    cy="50%"
+                    innerRadius={40}
+                    outerRadius={70}
+                    dataKey="value"
+                  >
+                    {statusStats.map((entry, index) => (
+                      <Cell key={`cell-${index}`} fill={entry.color} />
+                    ))}
+                  </Pie>
+                  <Tooltip
+                    contentStyle={{
+                      backgroundColor: '#1E293B',
+                      border: '1px solid #475569',
+                      borderRadius: '8px',
+                      color: '#F8FAFC',
+                    }}
+                  />
+                </PieChart>
+              </ResponsiveContainer>
+            </div>
+            <div className="px-4 pb-4 space-y-2">
+              {statusStats.map((stat) => (
+                <div key={stat.name} className="flex items-center justify-between text-sm">
+                  <div className="flex items-center gap-2">
+                    <div className="w-3 h-3 rounded-full" style={{ backgroundColor: stat.color }} />
+                    <span className="text-dark-300">{stat.name}</span>
+                  </div>
+                  <span className="text-white font-medium">{stat.value}人</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <div className="lg:col-span-3">
+          <div className="card animate-fade-in-up opacity-0">
+            <div className="p-4 border-b border-dark-700">
+              <div className="flex flex-wrap items-center justify-between gap-4">
+                <div className="flex items-center gap-4">
+                  <h3 className="text-lg font-semibold text-white">安保人员</h3>
+                  <div className="flex gap-2">
+                    <button
+                      className={cn(
+                        'px-3 py-1.5 rounded-lg text-sm transition-colors',
+                        activeTab === 'list'
+                          ? 'bg-primary-600 text-white'
+                          : 'bg-dark-700 text-dark-300 hover:text-white'
+                      )}
+                      onClick={() => setActiveTab('list')}
+                    >
+                      人员列表
+                    </button>
+                    <button
+                      className={cn(
+                        'px-3 py-1.5 rounded-lg text-sm transition-colors',
+                        activeTab === 'attendance'
+                          ? 'bg-primary-600 text-white'
+                          : 'bg-dark-700 text-dark-300 hover:text-white'
+                      )}
+                      onClick={() => setActiveTab('attendance')}
+                    >
+                      签到记录
+                    </button>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3">
+                  <div className="relative">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-dark-500" />
+                    <input
+                      type="text"
+                      placeholder="搜索人员..."
+                      value={searchTerm}
+                      onChange={(e) => setSearchTerm(e.target.value)}
+                      className="w-48 pl-9 pr-4 py-2 bg-dark-900 border border-dark-600 rounded-lg text-sm text-white placeholder-dark-500 focus:outline-none focus:ring-2 focus:ring-primary-500"
+                    />
+                  </div>
+                  <select
+                    value={statusFilter}
+                    onChange={(e) => setStatusFilter(e.target.value)}
+                    className="px-3 py-2 bg-dark-900 border border-dark-600 rounded-lg text-sm text-white focus:outline-none focus:ring-2 focus:ring-primary-500"
+                  >
+                    <option value="all">全部状态</option>
+                    <option value="on-duty">在岗</option>
+                    <option value="patrol">巡逻中</option>
+                    <option value="dispatched">调度中</option>
+                    <option value="rest">休息</option>
+                    <option value="off-duty">离岗</option>
+                  </select>
+                  <select
+                    value={areaFilter}
+                    onChange={(e) => setAreaFilter(e.target.value)}
+                    className="px-3 py-2 bg-dark-900 border border-dark-600 rounded-lg text-sm text-white focus:outline-none focus:ring-2 focus:ring-primary-500"
+                  >
+                    <option value="all">全部区域</option>
+                    {areas.map((area) => (
+                      <option key={area.id} value={area.id}>
+                        {area.name}
+                      </option>
+                    ))}
+                  </select>
+                  <button className="btn-primary flex items-center gap-2">
+                    <Plus className="w-4 h-4" />
+                    添加人员
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {activeTab === 'list' ? (
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead>
+                    <tr className="bg-dark-800/50">
+                      <th className="table-header">人员信息</th>
+                      <th className="table-header">职位</th>
+                      <th className="table-header">联系电话</th>
+                      <th className="table-header">所属区域</th>
+                      <th className="table-header">状态</th>
+                      <th className="table-header">操作</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-dark-700">
+                    {filteredPersonnel.map((person) => (
+                      <tr
+                        key={person.id}
+                        className="hover:bg-dark-700/30 transition-colors cursor-pointer"
+                        onClick={() => handlePersonnelClick(person)}
+                      >
+                        <td className="table-cell">
+                          <div className="flex items-center gap-3">
+                            <img
+                              src={person.avatar}
+                              alt={person.name}
+                              className="w-10 h-10 rounded-full bg-dark-700"
+                            />
+                            <div>
+                              <p className="font-medium text-white">{person.name}</p>
+                              <p className="text-xs text-dark-400">ID: {person.id}</p>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="table-cell">{person.position}</td>
+                        <td className="table-cell">
+                          <div className="flex items-center gap-2 text-dark-300">
+                            <Phone className="w-3.5 h-3.5" />
+                            {person.phone}
+                          </div>
+                        </td>
+                        <td className="table-cell">
+                          <div className="flex items-center gap-2 text-dark-300">
+                            <MapPin className="w-3.5 h-3.5" />
+                            {getAreaById(person.areaId)?.name}
+                          </div>
+                        </td>
+                        <td className="table-cell">
+                          <span className={`badge ${getStatusBgColor(person.status)}`}>
+                            {getStatusText(person.status)}
+                          </span>
+                        </td>
+                        <td className="table-cell">
+                          <div className="flex gap-2" onClick={(e) => e.stopPropagation()}>
+                            {person.status === 'off-duty' ? (
+                              <button
+                                onClick={() => {
+                                  setSelectedPersonnel(person);
+                                  setShowSignInModal(true);
+                                }}
+                                className="btn-success text-xs py-1 px-2 flex items-center gap-1"
+                              >
+                                <LogIn className="w-3 h-3" />
+                                签到
+                              </button>
+                            ) : (
+                              <button
+                                onClick={() => {
+                                  setSelectedPersonnel(person);
+                                  setShowSignInModal(true);
+                                }}
+                                className="btn-outline text-xs py-1 px-2 flex items-center gap-1"
+                              >
+                                <XCircle className="w-3 h-3" />
+                                签退
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="overflow-x-auto max-h-[600px] overflow-y-auto">
+                <table className="w-full">
+                  <thead className="sticky top-0 bg-dark-800">
+                    <tr>
+                      <th className="table-header">人员</th>
+                      <th className="table-header">类型</th>
+                      <th className="table-header">时间</th>
+                      <th className="table-header">地点</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-dark-700">
+                    {[...attendance]
+                      .sort((a, b) => b.checkinTime.getTime() - a.checkinTime.getTime())
+                      .slice(0, 50)
+                      .map((record) => (
+                        <tr key={record.id} className="hover:bg-dark-700/30 transition-colors">
+                          <td className="table-cell">
+                            <div className="flex items-center gap-2">
+                              <img
+                                src={useAppStore.getState().getPersonnelById(record.personnelId)?.avatar}
+                                alt=""
+                                className="w-8 h-8 rounded-full bg-dark-700"
+                              />
+                              <span className="text-white">
+                                {useAppStore.getState().getPersonnelById(record.personnelId)?.name}
+                              </span>
+                            </div>
+                          </td>
+                          <td className="table-cell">
+                            <span className={`badge ${record.type === 'on' ? 'badge-green' : 'badge-gray'}`}>
+                              {record.type === 'on' ? '上岗签到' : '下岗签退'}
+                            </span>
+                          </td>
+                          <td className="table-cell text-dark-300">
+                            {formatDate(record.checkinTime)} {formatTime(record.checkinTime)}
+                          </td>
+                          <td className="table-cell text-dark-300">{record.location}</td>
+                        </tr>
+                      ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <Modal
+        isOpen={showDetailModal}
+        onClose={() => setShowDetailModal(false)}
+        title="人员详情"
+        size="lg"
+      >
+        {selectedPersonnel && (
+          <div className="space-y-6">
+            <div className="flex items-center gap-4">
+              <img
+                src={selectedPersonnel.avatar}
+                alt={selectedPersonnel.name}
+                className="w-20 h-20 rounded-full bg-dark-700 border-2 border-primary-500"
+              />
+              <div>
+                <h4 className="text-2xl font-bold text-white">{selectedPersonnel.name}</h4>
+                <p className="text-dark-400">{selectedPersonnel.position}</p>
+                <span className={`badge ${getStatusBgColor(selectedPersonnel.status)} mt-2`}>
+                  {getStatusText(selectedPersonnel.status)}
+                </span>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="bg-dark-900 p-4 rounded-lg">
+                <p className="text-xs text-dark-400 mb-1">联系电话</p>
+                <p className="text-white flex items-center gap-2">
+                  <Phone className="w-4 h-4 text-primary-400" />
+                  {selectedPersonnel.phone}
+                </p>
+              </div>
+              <div className="bg-dark-900 p-4 rounded-lg">
+                <p className="text-xs text-dark-400 mb-1">所属区域</p>
+                <p className="text-white flex items-center gap-2">
+                  <MapPin className="w-4 h-4 text-primary-400" />
+                  {getAreaById(selectedPersonnel.areaId)?.name}
+                </p>
+              </div>
+            </div>
+
+            <div>
+              <h5 className="text-lg font-semibold text-white mb-3">近期签到记录</h5>
+              <div className="space-y-2 max-h-48 overflow-y-auto">
+                {getPersonnelAttendance(selectedPersonnel.id).slice(0, 5).map((record) => (
+                  <div
+                    key={record.id}
+                    className="flex items-center justify-between bg-dark-900 p-3 rounded-lg"
+                  >
+                    <div className="flex items-center gap-3">
+                      {record.type === 'on' ? (
+                        <CheckCircle className="w-5 h-5 text-success-500" />
+                      ) : (
+                        <XCircle className="w-5 h-5 text-dark-500" />
+                      )}
+                      <div>
+                        <p className="text-white">
+                          {record.type === 'on' ? '上岗签到' : '下岗签退'}
+                        </p>
+                        <p className="text-xs text-dark-400">{record.location}</p>
+                      </div>
+                    </div>
+                    <p className="text-dark-400 text-sm">
+                      {formatDate(record.checkinTime)} {formatTime(record.checkinTime)}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="flex gap-3 pt-4 border-t border-dark-700">
+              {selectedPersonnel.status === 'off-duty' ? (
+                <button
+                  onClick={() => setShowSignInModal(true)}
+                  className="btn-success flex-1 flex items-center justify-center gap-2"
+                >
+                  <UserPlus className="w-4 h-4" />
+                  签到上岗
+                </button>
+              ) : (
+                <button
+                  onClick={() => setShowSignInModal(true)}
+                  className="btn-outline flex-1 flex items-center justify-center gap-2"
+                >
+                  <XCircle className="w-4 h-4" />
+                  签退离岗
+                </button>
+              )}
+              <button className="btn-outline flex-1">岗位调整</button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      <Modal
+        isOpen={showSignInModal}
+        onClose={() => setShowSignInModal(false)}
+        title="确认签到"
+        size="sm"
+      >
+        {selectedPersonnel && (
+          <div className="space-y-4">
+            <div className="text-center py-4">
+              <img
+                src={selectedPersonnel.avatar}
+                alt={selectedPersonnel.name}
+                className="w-16 h-16 rounded-full bg-dark-700 mx-auto mb-3"
+              />
+              <h4 className="text-xl font-semibold text-white">{selectedPersonnel.name}</h4>
+              <p className="text-dark-400">{selectedPersonnel.position}</p>
+            </div>
+
+            <div className="bg-dark-900 p-4 rounded-lg text-center">
+              <p className="text-dark-400 text-sm mb-1">当前时间</p>
+              <p className="text-2xl font-mono text-white font-bold">
+                {formatTime(new Date())}
+              </p>
+            </div>
+
+            <div className="flex gap-3">
+              {selectedPersonnel.status === 'off-duty' ? (
+                <button
+                  onClick={() => handleSignIn(selectedPersonnel, 'on')}
+                  className="btn-success flex-1"
+                >
+                  确认签到
+                </button>
+              ) : (
+                <button
+                  onClick={() => handleSignIn(selectedPersonnel, 'off')}
+                  className="btn-danger flex-1"
+                >
+                  确认签退
+                </button>
+              )}
+              <button
+                onClick={() => setShowSignInModal(false)}
+                className="btn-outline flex-1"
+              >
+                取消
+              </button>
+            </div>
+          </div>
+        )}
+      </Modal>
+    </div>
+  );
+}
