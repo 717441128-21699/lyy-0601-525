@@ -17,6 +17,8 @@ import type {
   ActivityLog,
   TimelineEvent,
   DailyReport,
+  StocktakeRecord,
+  ShiftHandover,
 } from '@/types';
 
 const now = new Date();
@@ -66,10 +68,14 @@ export const mockRiskPoints: RiskPoint[] = [
 ];
 
 export const mockHiddenDangers: HiddenDanger[] = [
-  { id: 'hd1', pointId: 'rp10', title: '电线裸露', description: '设备间门口有电线裸露，存在安全隐患', photos: [], reporterId: 'p3', reportTime: new Date(now.getTime() - 3600000), status: 'processing', handlerId: 'p1' },
-  { id: 'hd2', pointId: 'rp2', title: '护栏松动', description: '舞台左侧护栏有轻微松动', photos: [], reporterId: 'p2', reportTime: new Date(now.getTime() - 7200000), status: 'resolved', handlerId: 'p5' },
-  { id: 'hd3', pointId: 'rp1', title: '安检设备故障', description: '2号安检机偶尔卡顿', photos: [], reporterId: 'p9', reportTime: new Date(now.getTime() - 1800000), status: 'pending' },
+  { id: 'hd1', pointId: 'rp10', areaId: 'a6', title: '电线裸露', description: '设备间门口有电线裸露，存在安全隐患', level: 'red', photos: [], reporterId: 'p3', reportTime: new Date(now.getTime() - 3600000), status: 'processing', handlerId: 'p1', transferHistory: [], statusChangeHistory: [{ time: new Date(now.getTime() - 3600000), from: 'pending', to: 'processing', operatorId: 'p1', remark: '分配处理任务' }] },
+  { id: 'hd2', pointId: 'rp2', areaId: 'a1', title: '护栏松动', description: '舞台左侧护栏有轻微松动', level: 'red', photos: [], reporterId: 'p2', reportTime: new Date(now.getTime() - 7200000), status: 'resolved', handlerId: 'p5', transferHistory: [], statusChangeHistory: [{ time: new Date(now.getTime() - 7200000), from: 'pending', to: 'processing', operatorId: 'p1', remark: '分配处理任务' }, { time: new Date(now.getTime() - 3600000), from: 'processing', to: 'resolved', operatorId: 'p5', remark: '已修复护栏' }] },
+  { id: 'hd3', pointId: 'rp1', areaId: 'a5', title: '安检设备故障', description: '2号安检机偶尔卡顿', level: 'orange', photos: [], reporterId: 'p9', reportTime: new Date(now.getTime() - 1800000), status: 'pending', transferHistory: [], statusChangeHistory: [] },
 ];
+
+export const mockStocktakeRecords: StocktakeRecord[] = [];
+
+export const mockShiftHandovers: ShiftHandover[] = [];
 
 export const mockPatrolRoutes: PatrolRoute[] = [
   { id: 'pr1', name: '主会场内环巡逻', pointIds: ['rp2', 'rp3', 'rp6', 'rp7'], estimatedTime: 30, description: '主会场内部重点区域巡逻' },

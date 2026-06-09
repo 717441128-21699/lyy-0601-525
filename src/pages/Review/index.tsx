@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { Calendar, FileText, BarChart3, Clock, AlertCircle, CheckCircle, AlertTriangle, Info, ChevronRight, Plus, Users, Shield, Package, Zap, Eye, Download, RefreshCw } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Calendar, FileText, BarChart3, Clock, AlertCircle, CheckCircle, AlertTriangle, Info, ChevronRight, Plus, Users, Shield, Package, Zap, Eye, Download, RefreshCw, RotateCcw } from 'lucide-react';
 import { useAppStore } from '@/store';
 import StatCard from '@/components/StatCard';
 import Modal from '@/components/Modal';
@@ -52,6 +52,10 @@ export default function Review() {
     addTimelineEvent,
     addActivityLog,
     getDailyReportByDate,
+    generateDailyReport,
+    generateTimelineEvents,
+    regenerateDailyReport,
+    updateDailyReport,
   } = useAppStore();
 
   const [selectedEvent, setSelectedEvent] = useState<TimelineEvent | null>(null);
@@ -71,262 +75,40 @@ export default function Review() {
   const todayStr = formatDate(today);
   const existingTodayReport = getDailyReportByDate(today);
 
-  const isSameDay = (date1: Date, date2: Date) => {
-    return date1.getFullYear() === date2.getFullYear() &&
-           date1.getMonth() === date2.getMonth() &&
-           date1.getDate() === date2.getDate();
-  };
-
-  const generateTimelineEvents = (): TimelineEvent[] => {
-    const events: TimelineEvent[] = [];
-    const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-
-    const todayIncidents = incidents.filter(i => isSameDay(i.reportTime, today));
-    todayIncidents.forEach(incident => {
-      events.push({
-        id: generateId(),
-        time: incident.reportTime,
-        title: `事件: ${incident.title}`,
-        description: incident.description,
-        type: 'incident',
-        relatedId: incident.id,
-      });
-    });
-
-    const todayDangers = hiddenDangers.filter(d => isSameDay(d.reportTime, today));
-    todayDangers.forEach(danger => {
-      const point = getRiskPointById(danger.pointId);
-      events.push({
-        id: generateId(),
-        time: danger.reportTime,
-        title: `隐患: ${danger.title}`,
-        description: `${point?.name || '未知点位'} - ${danger.description}`,
-        type: 'alert',
-        relatedId: danger.id,
-      });
-    });
-
-    const todayCheckins = patrolCheckins.filter(c => isSameDay(c.checkinTime, today));
-    todayCheckins.forEach(checkin => {
-      const point = getRiskPointById(checkin.pointId);
-      const person = getPersonnelById(patrolTasks.find(t => t.id === checkin.taskId)?.personnelId || '');
-      if (checkin.isAbnormal) {
-        events.push({
-          id: generateId(),
-          time: checkin.checkinTime,
-          title: `巡逻异常: ${point?.name || '未知点位'}`,
-          description: `${person?.name || '未知人员'} - ${checkin.remark || '发现异常'}`,
-          type: 'alert',
-          relatedId: checkin.id,
-        });
-      }
-    });
-
-    const todayEquipmentLogs = equipmentLogs.filter(l => isSameDay(l.time, today));
-    todayEquipmentLogs.slice(0, 5).forEach(log => {
-      const equip = getEquipmentById(log.equipmentId);
-      const person = getPersonnelById(log.personnelId);
-      events.push({
-        id: generateId(),
-        time: log.time,
-        title: `装备${log.type === 'borrow' ? '领用' : '归还'}: ${equip?.name || '未知装备'}`,
-        description: `${person?.name || '未知人员'} ${log.type === 'borrow' ? '领用' : '归还'} ${log.quantity}${equip?.unit || ''}`,
-        type: 'operation',
-        relatedId: log.id,
-      });
-    });
-
-    const completedTasks = patrolTasks.filter(t => t.status === 'completed' && isSameDay(t.endTime, today));
-    completedTasks.forEach(task => {
-      const route = getPatrolRouteById(task.routeId);
-      const person = getPersonnelById(task.personnelId);
-      events.push({
-        id: generateId(),
-        time: task.endTime,
-        title: `巡逻完成: ${route?.name || '未知路线'}`,
-        description: `${person?.name || '未知人员'} 完成巡逻任务`,
-        type: 'key',
-        relatedId: task.id,
-      });
-    });
-
-    events.sort((a, b) => a.time.getTime() - b.time.getTime());
-
-    const existingEventTimes = timelineEvents
-      .filter(e => isSameDay(e.time, today))
-      .map(e => e.time.getTime());
-
-    const newEvents = events.filter(e => !existingEventTimes.some(t => Math.abs(t - e.time.getTime()) < 60000));
-
-    return newEvents;
-  };
-
-  const generateDailyReport = (): DailyReport => {
-    const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-
-    const todayAttendance = attendance.filter(a => a.type === 'on' && isSameDay(a.checkinTime, today));
-    const personnelDetails = todayAttendance.map(a => {
-      const person = getPersonnelById(a.personnelId);
-      return {
-        personnelId: a.personnelId,
-        name: person?.name || '未知',
-        checkinTime: a.checkinTime,
-        status: person?.status || 'unknown',
-      };
-    });
-
-    const todayIncidents = incidents.filter(i => isSameDay(i.reportTime, today));
-    const incidentDetails = todayIncidents.map(i => ({
-      id: i.id,
-      title: i.title,
-      level: i.level,
-      status: i.status,
-      reportTime: i.reportTime,
-      handlerName: i.currentHandlerId ? getPersonnelById(i.currentHandlerId)?.name : undefined,
-    }));
-
-    const byLevel: Record<IncidentLevel, number> = { red: 0, orange: 0, yellow: 0, blue: 0 };
-    todayIncidents.forEach(i => byLevel[i.level]++);
-
-    const keyEvents = todayIncidents
-      .filter(i => i.level === 'red' || i.level === 'orange')
-      .map(i => `${formatTime(i.reportTime)} - ${i.title}`);
-
-    const todayTasks = patrolTasks.filter(t => isSameDay(t.startTime, today));
-    const completedTaskCount = todayTasks.filter(t => t.status === 'completed').length;
-    const taskDetails = todayTasks.map(t => {
-      const route = getPatrolRouteById(t.routeId);
-      const person = getPersonnelById(t.personnelId);
-      const checkinCount = patrolCheckins.filter(c => c.taskId === t.id).length;
-      return {
-        id: t.id,
-        routeName: route?.name || '未知路线',
-        personnelName: person?.name || '未知',
-        status: t.status,
-        checkinCount,
-      };
-    });
-
-    const todayCheckins = patrolCheckins.filter(c => isSameDay(c.checkinTime, today));
-    const abnormalCheckins = todayCheckins.filter(c => c.isAbnormal).length;
-
-    const todayEquipmentLogs = equipmentLogs.filter(l => isSameDay(l.time, today));
-    const borrowedCount = todayEquipmentLogs.filter(l => l.type === 'borrow').length;
-    const returnedCount = todayEquipmentLogs.filter(l => l.type === 'return').length;
-    const lowStockItems = equipment.filter(e => e.available <= e.warningThreshold);
-    const equipmentDetails = todayEquipmentLogs.map(l => {
-      const equip = getEquipmentById(l.equipmentId);
-      const person = getPersonnelById(l.personnelId);
-      return {
-        id: l.id,
-        equipmentName: equip?.name || '未知装备',
-        type: l.type,
-        personnelName: person?.name || '未知',
-        quantity: l.quantity,
-        time: l.time,
-      };
-    });
-
-    const todayDangers = hiddenDangers.filter(d => isSameDay(d.reportTime, today));
-    const dangerDetails = todayDangers.map(d => {
-      const point = getRiskPointById(d.pointId);
-      return {
-        id: d.id,
-        title: d.title,
-        pointName: point?.name || '未知点位',
-        status: d.status,
-        reportTime: d.reportTime,
-      };
-    });
-
-    const newTimelineEvents = generateTimelineEvents();
-
-    const allTodayEvents = [
-      ...timelineEvents.filter(e => isSameDay(e.time, today)),
-      ...newTimelineEvents,
-    ].sort((a, b) => a.time.getTime() - b.time.getTime());
-
-    let summary = `今日活动${todayIncidents.length > 0 ? '整体平稳' : '安全有序'}。`;
-    summary += `人员出勤${personnelDetails.length}人，出勤率${((personnelDetails.length / personnel.length) * 100).toFixed(1)}%。`;
-    summary += `发生事件${todayIncidents.length}起，已完成${todayIncidents.filter(i => i.status === 'completed').length}起。`;
-    if (todayIncidents.some(i => i.level === 'red' || i.level === 'orange')) {
-      summary += `重点关注${todayIncidents.filter(i => i.level === 'red' || i.level === 'orange').map(i => i.title).join('、')}。`;
-    }
-    summary += `巡逻任务${todayTasks.length}个，完成率${todayTasks.length > 0 ? Math.round((completedTaskCount / todayTasks.length) * 100) : 0}%。`;
-    if (lowStockItems.length > 0) {
-      summary += `物资预警：${lowStockItems.map(i => i.name).join('、')}库存不足，请及时补充。`;
-    }
-
-    return {
-      id: generateId(),
-      date: today,
-      generatedAt: new Date(),
-      personnelAttendance: {
-        total: personnel.length,
-        onDuty: onDutyPersonnel,
-        attendanceRate: Math.round((personnelDetails.length / personnel.length) * 1000) / 10,
-        details: personnelDetails,
-      },
-      incidents: {
-        total: todayIncidents.length,
-        completed: todayIncidents.filter(i => i.status === 'completed').length,
-        byLevel,
-        details: incidentDetails,
-        keyEvents,
-      },
-      patrols: {
-        total: todayTasks.length,
-        completed: completedTaskCount,
-        completionRate: todayTasks.length > 0 ? Math.round((completedTaskCount / todayTasks.length) * 100) : 0,
-        totalCheckins: todayCheckins.length,
-        abnormalCheckins,
-        details: taskDetails,
-      },
-      equipment: {
-        borrowed: borrowedCount,
-        returned: returnedCount,
-        lowStock: lowStockItems.length,
-        details: equipmentDetails,
-        lowStockItems: lowStockItems.map(e => ({
-          id: e.id,
-          name: e.name,
-          available: e.available,
-          warningThreshold: e.warningThreshold,
-        })),
-      },
-      hiddenDangers: {
-        total: todayDangers.length,
-        pending: todayDangers.filter(d => d.status === 'pending').length,
-        resolved: todayDangers.filter(d => d.status === 'resolved').length,
-        details: dangerDetails,
-      },
-      timelineEvents: allTodayEvents,
-      summary,
-    };
-  };
-
   const handleGenerateReport = async () => {
     setIsGenerating(true);
     setGenerateSuccess(false);
 
     await new Promise(resolve => setTimeout(resolve, 1000));
 
-    const newTimelineEvents = generateTimelineEvents();
+    const newTimelineEvents = generateTimelineEvents(today);
     newTimelineEvents.forEach(event => {
       addTimelineEvent(event);
     });
 
-    const report = generateDailyReport();
-    addDailyReport(report);
-
-    addActivityLog({
-      id: generateId(),
-      type: 'alert',
-      title: '生成日报',
-      description: `${todayStr} 日报已生成`,
-      time: new Date(),
-      relatedId: report.id,
-    });
+    let report: DailyReport;
+    if (existingTodayReport) {
+      report = regenerateDailyReport(today);
+      addActivityLog({
+        id: generateId(),
+        type: 'alert',
+        title: '重新生成日报',
+        description: `${todayStr} 日报已重新生成`,
+        time: new Date(),
+        relatedId: report.id,
+      });
+    } else {
+      report = generateDailyReport(today);
+      addDailyReport(report);
+      addActivityLog({
+        id: generateId(),
+        type: 'alert',
+        title: '生成日报',
+        description: `${todayStr} 日报已生成`,
+        time: new Date(),
+        relatedId: report.id,
+      });
+    }
 
     setIsGenerating(false);
     setGenerateSuccess(true);
@@ -393,11 +175,8 @@ export default function Review() {
           )}
           <button
             onClick={handleGenerateReport}
-            disabled={isGenerating || !!existingTodayReport}
-            className={cn(
-              'btn-primary flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed',
-              existingTodayReport && 'bg-dark-700 hover:bg-dark-600'
-            )}
+            disabled={isGenerating}
+            className="btn-primary flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {isGenerating ? (
               <>
@@ -406,8 +185,8 @@ export default function Review() {
               </>
             ) : existingTodayReport ? (
               <>
-                <CheckCircle className="w-4 h-4" />
-                今日已生成
+                <RotateCcw className="w-4 h-4" />
+                重新汇总生成
               </>
             ) : (
               <>

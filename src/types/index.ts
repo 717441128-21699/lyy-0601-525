@@ -41,16 +41,29 @@ export interface RiskPoint {
   status: 'normal' | 'warning' | 'danger';
 }
 
+export interface DangerTransferRecord {
+  id: string;
+  dangerId: string;
+  fromHandlerId: string;
+  toHandlerId: string;
+  transferTime: Date;
+  remark?: string;
+}
+
 export interface HiddenDanger {
   id: string;
   pointId: string;
+  areaId: string;
   title: string;
   description: string;
+  level: 'red' | 'orange' | 'yellow' | 'blue';
   photos: string[];
   reporterId: string;
   reportTime: Date;
   status: 'pending' | 'processing' | 'resolved';
   handlerId?: string;
+  transferHistory: DangerTransferRecord[];
+  statusChangeHistory: { time: Date; from: string; to: string; operatorId: string; remark?: string }[];
 }
 
 export interface PatrolRoute {
@@ -115,7 +128,19 @@ export interface IncidentRecord {
   time: Date;
   content: string;
   operatorId: string;
-  type: 'report' | 'dispatch' | 'update' | 'complete';
+  type: 'report' | 'dispatch' | 'update' | 'complete' | 'intercom';
+}
+
+export interface ShiftHandover {
+  id: string;
+  fromPersonnelId: string;
+  toPersonnelId: string;
+  handoverTime: Date;
+  areaIds: string[];
+  pendingDangerIds: string[];
+  processingIncidentIds: string[];
+  remark?: string;
+  status: 'completed';
 }
 
 export interface IntercomLog {
@@ -143,11 +168,25 @@ export interface EquipmentLog {
   id: string;
   equipmentId: string;
   personnelId: string;
-  type: 'borrow' | 'return';
+  type: 'borrow' | 'return' | 'stocktake';
   time: Date;
   quantity: number;
   status: 'pending' | 'approved' | 'rejected' | 'completed';
+  approverId?: string;
+  approvalTime?: Date;
   remark?: string;
+}
+
+export interface StocktakeRecord {
+  id: string;
+  equipmentId: string;
+  operatorId: string;
+  time: Date;
+  expectedQuantity: number;
+  actualQuantity: number;
+  difference: number;
+  differenceReason?: string;
+  status: 'pending' | 'adjusted';
 }
 
 export interface Alert {
@@ -230,7 +269,7 @@ export interface DailyReport {
     details: {
       id: string;
       equipmentName: string;
-      type: 'borrow' | 'return';
+      type: 'borrow' | 'return' | 'stocktake';
       personnelName: string;
       quantity: number;
       time: Date;

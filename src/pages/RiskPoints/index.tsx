@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { MapPin, AlertTriangle, Shield, CheckCircle, Plus, Search, Eye, Edit, Trash2, Camera, DoorOpen, Zap, Upload, X, UserPlus } from 'lucide-react';
+import { MapPin, AlertTriangle, Shield, CheckCircle, Plus, Search, Eye, Edit, Trash2, Camera, DoorOpen, Zap, Upload, X, UserPlus, RefreshCw, ArrowRight } from 'lucide-react';
 import { useAppStore } from '@/store';
 import { getStatusBgColor, getStatusText, getLevelBgColor, getLevelText, formatTime, generateId, cn } from '@/utils';
 import type { RiskPoint, HiddenDanger, Personnel } from '@/types';
@@ -19,6 +19,8 @@ export default function RiskPoints() {
     addHiddenDanger,
     updateHiddenDanger,
     addActivityLog,
+    transferDangerHandler,
+    changeDangerStatus,
   } = useAppStore();
 
   const [activeTab, setActiveTab] = useState<'areas' | 'points' | 'dangers'>('areas');
@@ -29,15 +31,22 @@ export default function RiskPoints() {
   const [showDangerModal, setShowDangerModal] = useState(false);
   const [showAddDangerModal, setShowAddDangerModal] = useState(false);
   const [showAssignModal, setShowAssignModal] = useState(false);
+  const [showTransferModal, setShowTransferModal] = useState(false);
+  const [showStatusModal, setShowStatusModal] = useState(false);
 
   const [newDanger, setNewDanger] = useState({
     title: '',
     description: '',
     pointId: '',
+    level: 'yellow' as 'red' | 'orange' | 'yellow' | 'blue',
     photos: [] as string[],
   });
 
   const [selectedHandler, setSelectedHandler] = useState('');
+  const [newHandlerId, setNewHandlerId] = useState('');
+  const [newStatus, setNewStatus] = useState<'pending' | 'processing' | 'resolved'>('pending');
+  const [statusRemark, setStatusRemark] = useState('');
+  const [transferRemark, setTransferRemark] = useState('');
   const [photoPreview, setPhotoPreview] = useState<string | null>(null);
 
   const levelStats = [
@@ -81,15 +90,20 @@ export default function RiskPoints() {
   const handleAddDanger = () => {
     if (!newDanger.title || !newDanger.pointId) return;
 
+    const point = useAppStore.getState().getRiskPointById(newDanger.pointId);
     const danger: HiddenDanger = {
       id: generateId(),
       title: newDanger.title,
       description: newDanger.description,
       pointId: newDanger.pointId,
+      areaId: point?.areaId || '',
+      level: newDanger.level,
       photos: newDanger.photos,
       reporterId: 'p1',
       reportTime: new Date(),
       status: 'pending',
+      transferHistory: [],
+      statusChangeHistory: [],
     };
 
     addHiddenDanger(danger);
@@ -102,13 +116,13 @@ export default function RiskPoints() {
       relatedId: danger.id,
     });
 
-    setNewDanger({ title: '', description: '', pointId: '', photos: [] });
+    setNewDanger({ title: '', description: '', pointId: '', level: 'yellow', photos: [] });
     setPhotoPreview(null);
     setShowAddDangerModal(false);
   };
 
   const handleMarkResolved = (danger: HiddenDanger) => {
-    updateHiddenDanger(danger.id, { status: 'resolved' });
+    changeDangerStatus(danger.id, danger.status, 'resolved', 'p1', '已解决');
     addActivityLog({
       id: generateId(),
       type: 'alert',
@@ -117,12 +131,16 @@ export default function RiskPoints() {
       time: new Date(),
       relatedId: danger.id,
     });
-    setSelectedDanger({ ...danger, status: 'resolved' });
+    const updatedDanger = hiddenDangers.find(d => d.id === danger.id);
+    if (updatedDanger) {
+      setSelectedDanger(updatedDanger);
+    }
   };
 
   const handleAssignHandler = (danger: HiddenDanger) => {
     if (!selectedHandler) return;
     updateHiddenDanger(danger.id, { handlerId: selectedHandler, status: 'processing' });
+    changeDangerStatus(danger.id, danger.status, 'processing', 'p1', '分配处理人');
     addActivityLog({
       id: generateId(),
       type: 'alert',
@@ -131,9 +149,51 @@ export default function RiskPoints() {
       time: new Date(),
       relatedId: danger.id,
     });
-    setSelectedDanger({ ...danger, handlerId: selectedHandler, status: 'processing' });
+    const updatedDanger = hiddenDangers.find(d => d.id === danger.id);
+    if (updatedDanger) {
+      setSelectedDanger(updatedDanger);
+    }
     setSelectedHandler('');
     setShowAssignModal(false);
+  };
+
+  const handleTransferHandler = (danger: HiddenDanger) => {
+    if (!newHandlerId || !danger.handlerId) return;
+    transferDangerHandler(danger.id, danger.handlerId, newHandlerId, 'p1', transferRemark);
+    addActivityLog({
+      id: generateId(),
+      type: 'alert',
+      title: '改派隐患处理人',
+      description: `${danger.title} 已从 ${getPersonnelById(danger.handlerId)?.name} 改派给 ${getPersonnelById(newHandlerId)?.name}`,
+      time: new Date(),
+      relatedId: danger.id,
+    });
+    const updatedDanger = hiddenDangers.find(d => d.id === danger.id);
+    if (updatedDanger) {
+      setSelectedDanger(updatedDanger);
+    }
+    setNewHandlerId('');
+    setTransferRemark('');
+    setShowTransferModal(false);
+  };
+
+  const handleChangeStatus = (danger: HiddenDanger) => {
+    if (danger.status === newStatus) return;
+    changeDangerStatus(danger.id, danger.status, newStatus, 'p1', statusRemark);
+    addActivityLog({
+      id: generateId(),
+      type: 'alert',
+      title: '隐患状态变更',
+      description: `${danger.title} 状态从 ${getStatusText(danger.status)} 变更为 ${getStatusText(newStatus)}`,
+      time: new Date(),
+      relatedId: danger.id,
+    });
+    const updatedDanger = hiddenDangers.find(d => d.id === danger.id);
+    if (updatedDanger) {
+      setSelectedDanger(updatedDanger);
+    }
+    setStatusRemark('');
+    setShowStatusModal(false);
   };
 
   const handleDeleteDanger = (danger: HiddenDanger) => {
@@ -332,9 +392,11 @@ export default function RiskPoints() {
                       <td className="table-cell"><span className={`badge ${getStatusBgColor(danger.status)}`}>{getStatusText(danger.status)}</span></td>
                       <td className="table-cell">
                         <div className="flex gap-2" onClick={e => e.stopPropagation()}>
-                          <button onClick={() => { setSelectedDanger(danger); setShowDangerModal(true); }} className="text-primary-400 hover:text-primary-300 p-1"><Eye className="w-4 h-4" /></button>
-                          {danger.status !== 'resolved' && <button onClick={() => handleMarkResolved(danger)} className="text-success-400 hover:text-success-300 p-1"><CheckCircle className="w-4 h-4" /></button>}
-                          <button onClick={() => handleDeleteDanger(danger)} className="text-danger-400 hover:text-danger-300 p-1"><Trash2 className="w-4 h-4" /></button>
+                          <button onClick={() => { setSelectedDanger(danger); setShowDangerModal(true); }} className="text-primary-400 hover:text-primary-300 p-1" title="查看详情"><Eye className="w-4 h-4" /></button>
+                          {danger.status !== 'resolved' && <button onClick={() => handleMarkResolved(danger)} className="text-success-400 hover:text-success-300 p-1" title="标记已解决"><CheckCircle className="w-4 h-4" /></button>}
+                          {danger.handlerId && <button onClick={() => { setSelectedDanger(danger); setNewHandlerId(''); setShowTransferModal(true); }} className="text-warning-400 hover:text-warning-300 p-1" title="改派处理人"><RefreshCw className="w-4 h-4" /></button>}
+                          <button onClick={() => { setSelectedDanger(danger); setNewStatus(danger.status); setStatusRemark(''); setShowStatusModal(true); }} className="text-info-400 hover:text-info-300 p-1" title="调整状态"><ArrowRight className="w-4 h-4" /></button>
+                          <button onClick={() => handleDeleteDanger(danger)} className="text-danger-400 hover:text-danger-300 p-1" title="删除"><Trash2 className="w-4 h-4" /></button>
                         </div>
                       </td>
                     </tr>
@@ -424,10 +486,60 @@ export default function RiskPoints() {
               <div className="bg-dark-900 p-3 rounded-lg"><p className="text-xs text-dark-400 mb-1">处理人</p><p className="text-white">{selectedDanger.handlerId ? getPersonnelById(selectedDanger.handlerId)?.name : '未分配'}</p></div>
             </div>
 
-            <div className="flex gap-3 pt-2">
-              {selectedDanger.status !== 'resolved' && <button onClick={() => handleMarkResolved(selectedDanger)} className="btn-success flex-1">标记已解决</button>}
-              {!selectedDanger.handlerId && <button onClick={() => { setSelectedDanger(selectedDanger); setShowAssignModal(true); }} className="btn-primary flex-1">分配处理人</button>}
-              <button onClick={() => setShowDangerModal(false)} className="btn-outline">关闭</button>
+            {selectedDanger.statusChangeHistory && selectedDanger.statusChangeHistory.length > 0 && (
+              <div className="bg-dark-900 p-4 rounded-lg">
+                <h5 className="text-sm font-semibold text-white mb-3">状态流转历史</h5>
+                <div className="space-y-2 max-h-32 overflow-y-auto">
+                  {selectedDanger.statusChangeHistory.map((record, idx) => (
+                    <div key={idx} className="flex items-start gap-3 p-2 bg-dark-800 rounded">
+                      <ArrowRight className="w-4 h-4 text-primary-400 mt-0.5 flex-shrink-0" />
+                      <div className="flex-1">
+                        <p className="text-sm text-white">
+                          <span className={`badge ${getStatusBgColor(record.from)} mr-1`}>{getStatusText(record.from)}</span>
+                          <ArrowRight className="w-3 h-3 inline mx-1 text-dark-500" />
+                          <span className={`badge ${getStatusBgColor(record.to)}`}>{getStatusText(record.to)}</span>
+                        </p>
+                        <p className="text-xs text-dark-400 mt-1">
+                          操作人: {getPersonnelById(record.operatorId)?.name || '未知'} · {formatTime(record.time)}
+                          {record.remark && ` · ${record.remark}`}
+                        </p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {selectedDanger.transferHistory && selectedDanger.transferHistory.length > 0 && (
+              <div className="bg-dark-900 p-4 rounded-lg">
+                <h5 className="text-sm font-semibold text-white mb-3">处理人变更记录</h5>
+                <div className="space-y-2 max-h-32 overflow-y-auto">
+                  {selectedDanger.transferHistory.map((record) => (
+                    <div key={record.id} className="flex items-start gap-3 p-2 bg-dark-800 rounded">
+                      <RefreshCw className="w-4 h-4 text-warning-400 mt-0.5 flex-shrink-0" />
+                      <div className="flex-1">
+                        <p className="text-sm text-white">
+                          {getPersonnelById(record.fromHandlerId)?.name || '未知'}
+                          <ArrowRight className="w-3 h-3 inline mx-1 text-dark-500" />
+                          {getPersonnelById(record.toHandlerId)?.name || '未知'}
+                        </p>
+                        <p className="text-xs text-dark-400 mt-1">
+                          {formatTime(record.transferTime)}
+                          {record.remark && ` · ${record.remark}`}
+                        </p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="flex gap-3 pt-2 flex-wrap">
+              {selectedDanger.status !== 'resolved' && <button onClick={() => handleMarkResolved(selectedDanger)} className="btn-success flex-1 min-w-[120px]">标记已解决</button>}
+              {!selectedDanger.handlerId && <button onClick={() => { setShowAssignModal(true); }} className="btn-primary flex-1 min-w-[120px]">分配处理人</button>}
+              {selectedDanger.handlerId && <button onClick={() => { setNewHandlerId(''); setShowTransferModal(true); }} className="btn-warning flex-1 min-w-[120px]">改派处理人</button>}
+              <button onClick={() => { setNewStatus(selectedDanger.status); setStatusRemark(''); setShowStatusModal(true); }} className="btn-outline flex-1 min-w-[120px]">调整状态</button>
+              <button onClick={() => setShowDangerModal(false)} className="btn-outline min-w-[80px]">关闭</button>
             </div>
           </div>
         )}
@@ -458,6 +570,27 @@ export default function RiskPoints() {
                 <option key={point.id} value={point.id}>{point.name} ({getAreaById(point.areaId)?.name})</option>
               ))}
             </select>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-dark-300 mb-2">隐患等级</label>
+            <div className="grid grid-cols-4 gap-2">
+              {(['red', 'orange', 'yellow', 'blue'] as const).map((level) => (
+                <button
+                  key={level}
+                  type="button"
+                  onClick={() => setNewDanger(prev => ({ ...prev, level }))}
+                  className={cn(
+                    'py-2 px-3 rounded-lg border transition-colors text-sm font-medium',
+                    newDanger.level === level
+                      ? getLevelBgColor(level) + ' border-transparent text-white'
+                      : 'bg-dark-700 border-dark-600 text-dark-300 hover:border-primary-500'
+                  )}
+                >
+                  {getLevelText(level)}
+                </button>
+              ))}
+            </div>
           </div>
 
           <div>
@@ -501,7 +634,7 @@ export default function RiskPoints() {
 
           <div className="flex gap-3 pt-4 border-t border-dark-700">
             <button onClick={handleAddDanger} disabled={!newDanger.title || !newDanger.pointId} className="btn-primary flex-1 disabled:opacity-50 disabled:cursor-not-allowed">提交登记</button>
-            <button onClick={() => { setShowAddDangerModal(false); setPhotoPreview(null); setNewDanger({ title: '', description: '', pointId: '', photos: [] }); }} className="btn-outline flex-1">取消</button>
+            <button onClick={() => { setShowAddDangerModal(false); setPhotoPreview(null); setNewDanger({ title: '', description: '', pointId: '', level: 'yellow', photos: [] }); }} className="btn-outline flex-1">取消</button>
           </div>
         </div>
       </Modal>
@@ -535,6 +668,106 @@ export default function RiskPoints() {
             <button onClick={() => { setShowAssignModal(false); setSelectedHandler(''); }} className="btn-outline flex-1">取消</button>
           </div>
         </div>
+      </Modal>
+
+      <Modal isOpen={showTransferModal} onClose={() => { setShowTransferModal(false); setNewHandlerId(''); setTransferRemark(''); }} title="改派处理人" size="md">
+        {selectedDanger && (
+          <div className="space-y-4">
+            <div className="bg-dark-900 p-4 rounded-lg">
+              <p className="text-sm text-dark-400">当前隐患</p>
+              <p className="text-white font-medium">{selectedDanger.title}</p>
+              <p className="text-sm text-dark-300 mt-1">
+                当前处理人: {selectedDanger.handlerId ? getPersonnelById(selectedDanger.handlerId)?.name : '未分配'}
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-dark-300 mb-2">选择新处理人员</label>
+              <div className="space-y-2 max-h-64 overflow-y-auto">
+                {onDutyPersonnel.filter(p => p.id !== selectedDanger.handlerId).map(person => (
+                  <label key={person.id} className={cn(
+                    'flex items-center gap-3 p-3 rounded-lg cursor-pointer transition-colors border',
+                    newHandlerId === person.id
+                      ? 'bg-primary-500/20 border-primary-500/50'
+                      : 'bg-dark-800 border-transparent hover:bg-dark-700'
+                  )}>
+                    <input type="radio" name="newHandler" value={person.id} checked={newHandlerId === person.id} onChange={e => setNewHandlerId(e.target.value)} className="hidden" />
+                    <img src={person.avatar} alt="" className="w-10 h-10 rounded-full bg-dark-700" />
+                    <div className="flex-1">
+                      <p className="text-white font-medium">{person.name}</p>
+                      <p className="text-xs text-dark-400">{person.position} · {getAreaById(person.areaId)?.name}</p>
+                    </div>
+                    {newHandlerId === person.id && <UserPlus className="w-5 h-5 text-primary-400" />}
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-dark-300 mb-2">改派备注</label>
+              <textarea
+                value={transferRemark}
+                onChange={e => setTransferRemark(e.target.value)}
+                placeholder="请输入改派原因..."
+                className="input-field min-h-[80px]"
+              />
+            </div>
+
+            <div className="flex gap-3 pt-4 border-t border-dark-700">
+              <button onClick={() => selectedDanger && handleTransferHandler(selectedDanger)} disabled={!newHandlerId} className="btn-primary flex-1 disabled:opacity-50 disabled:cursor-not-allowed">确认改派</button>
+              <button onClick={() => { setShowTransferModal(false); setNewHandlerId(''); setTransferRemark(''); }} className="btn-outline flex-1">取消</button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      <Modal isOpen={showStatusModal} onClose={() => { setShowStatusModal(false); setStatusRemark(''); }} title="调整隐患状态" size="md">
+        {selectedDanger && (
+          <div className="space-y-4">
+            <div className="bg-dark-900 p-4 rounded-lg">
+              <p className="text-sm text-dark-400">当前隐患</p>
+              <p className="text-white font-medium">{selectedDanger.title}</p>
+              <p className="text-sm text-dark-300 mt-1">
+                当前状态: <span className={`badge ${getStatusBgColor(selectedDanger.status)}`}>{getStatusText(selectedDanger.status)}</span>
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-dark-300 mb-2">选择新状态</label>
+              <div className="grid grid-cols-3 gap-3">
+                {(['pending', 'processing', 'resolved'] as const).map(status => (
+                  <button
+                    key={status}
+                    onClick={() => setNewStatus(status)}
+                    className={cn(
+                      'p-4 rounded-lg border-2 transition-all text-center',
+                      newStatus === status
+                        ? 'border-primary-500 bg-primary-500/20'
+                        : 'border-dark-700 bg-dark-800 hover:border-dark-600'
+                    )}
+                  >
+                    <span className={`badge ${getStatusBgColor(status)} mb-2`}>{getStatusText(status)}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-dark-300 mb-2">状态变更备注</label>
+              <textarea
+                value={statusRemark}
+                onChange={e => setStatusRemark(e.target.value)}
+                placeholder="请输入状态变更原因..."
+                className="input-field min-h-[80px]"
+              />
+            </div>
+
+            <div className="flex gap-3 pt-4 border-t border-dark-700">
+              <button onClick={() => selectedDanger && handleChangeStatus(selectedDanger)} disabled={selectedDanger.status === newStatus} className="btn-primary flex-1 disabled:opacity-50 disabled:cursor-not-allowed">确认调整</button>
+              <button onClick={() => { setShowStatusModal(false); setStatusRemark(''); }} className="btn-outline flex-1">取消</button>
+            </div>
+          </div>
+        )}
       </Modal>
     </div>
   );

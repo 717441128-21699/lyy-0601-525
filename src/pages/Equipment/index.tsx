@@ -1,8 +1,8 @@
 import { useState } from 'react';
-import { Package, AlertTriangle, ArrowUpDown, Search, Radio, Shield, Flashlight, Briefcase, Stethoscope, Layers, Scan, Plus, Minus, CheckCircle, X } from 'lucide-react';
+import { Package, AlertTriangle, ArrowUpDown, Search, Radio, Shield, Flashlight, Briefcase, Stethoscope, Layers, Scan, Plus, Minus, CheckCircle, X, Clock, Check, XCircle, FileText, ClipboardCheck, Handshake } from 'lucide-react';
 import { useAppStore } from '@/store';
 import { getStatusBgColor, getStatusText, formatDate, formatTime, generateId, cn } from '@/utils';
-import type { Equipment, EquipmentLog } from '@/types';
+import type { Equipment, EquipmentLog, StocktakeRecord } from '@/types';
 import Modal from '@/components/Modal';
 import StatCard from '@/components/StatCard';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts';
@@ -14,6 +14,7 @@ export default function Equipment() {
   const {
     equipment,
     equipmentLogs,
+    stocktakeRecords,
     personnel,
     getPersonnelById,
     getEquipmentById,
@@ -21,23 +22,36 @@ export default function Equipment() {
     addEquipmentLog,
     addActivityLog,
     addAlert,
+    approveEquipmentLog,
+    rejectEquipmentLog,
+    addStocktakeRecord,
+    updateStocktakeRecord,
+    adjustStockAfterStocktake,
+    getPendingApprovalLogs,
+    getEquipmentLogsByEquipment,
   } = useAppStore();
 
   const [searchTerm, setSearchTerm] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('all');
   const [selectedEquipment, setSelectedEquipment] = useState<Equipment | null>(null);
   const [showDetailModal, setShowDetailModal] = useState(false);
-  const [activeTab, setActiveTab] = useState<'ledger' | 'records' | 'warnings'>('ledger');
+  const [activeTab, setActiveTab] = useState<'ledger' | 'records' | 'approvals' | 'stocktake' | 'warnings'>('ledger');
 
   const [showBorrowModal, setShowBorrowModal] = useState(false);
   const [showReturnModal, setShowReturnModal] = useState(false);
   const [showRestockModal, setShowRestockModal] = useState(false);
+  const [showStocktakeModal, setShowStocktakeModal] = useState(false);
+  const [showApprovalDetailModal, setShowApprovalDetailModal] = useState(false);
+  const [selectedApprovalLog, setSelectedApprovalLog] = useState<EquipmentLog | null>(null);
+  const [rejectReason, setRejectReason] = useState('');
 
   const [formData, setFormData] = useState({
     quantity: 1,
     personnelId: '',
     remark: '',
     restockQuantity: 0,
+    stocktakeActualQuantity: 0,
+    stocktakeDifferenceReason: '',
   });
 
   const categories = [...new Set(equipment.map(e => e.category))];
@@ -45,6 +59,7 @@ export default function Equipment() {
   const total = equipment.reduce((sum, e) => sum + e.total, 0);
   const available = equipment.reduce((sum, e) => sum + e.available, 0);
   const todayLogs = equipmentLogs.filter(l => new Date(l.time).toDateString() === new Date().toDateString());
+  const pendingApprovals = getPendingApprovalLogs();
 
   const categoryStats = categories.map((cat, i) => ({ name: cat, value: equipment.filter(e => e.category === cat).length, color: CATEGORY_COLORS[i % CATEGORY_COLORS.length] }));
   const filtered = equipment.filter(e => (e.name.includes(searchTerm) || e.model.includes(searchTerm) || e.location.includes(searchTerm)) && (categoryFilter === 'all' || e.category === categoryFilter));
@@ -58,10 +73,6 @@ export default function Equipment() {
     if (!selectedItem || !formData.personnelId || formData.quantity <= 0) return;
     if (formData.quantity > selectedItem.available) return;
 
-    const newAvailable = selectedItem.available - formData.quantity;
-
-    updateEquipment(selectedItem.id, { available: newAvailable });
-
     const log: EquipmentLog = {
       id: generateId(),
       equipmentId: selectedItem.id,
@@ -69,7 +80,7 @@ export default function Equipment() {
       quantity: formData.quantity,
       personnelId: formData.personnelId,
       time: new Date(),
-      status: 'completed',
+      status: 'pending',
       remark: formData.remark,
     };
     addEquipmentLog(log);
@@ -77,33 +88,73 @@ export default function Equipment() {
     addActivityLog({
       id: generateId(),
       type: 'equipment',
-      title: '装备领用',
-      description: `${getPersonnelById(formData.personnelId)?.name} 领用 ${selectedItem.name} × ${formData.quantity}`,
+      title: '装备领用申请',
+      description: `${getPersonnelById(formData.personnelId)?.name} 申请领用 ${selectedItem.name} × ${formData.quantity}，待审批`,
       time: new Date(),
       relatedId: log.id,
     });
 
-    if (newAvailable <= selectedItem.warningThreshold) {
+    setFormData({ quantity: 1, personnelId: '', remark: '', restockQuantity: 0, stocktakeActualQuantity: 0, stocktakeDifferenceReason: '' });
+    setShowBorrowModal(false);
+  };
+
+  const handleApprove = (log: EquipmentLog) => {
+    const equip = getEquipmentById(log.equipmentId);
+    if (!equip) return;
+
+    const newAvailable = equip.available - log.quantity;
+    updateEquipment(equip.id, { available: newAvailable });
+
+    approveEquipmentLog(log.id, 'p1');
+
+    addActivityLog({
+      id: generateId(),
+      type: 'equipment',
+      title: '装备领用审批通过',
+      description: `${getPersonnelById(log.personnelId)?.name} 领用 ${equip.name} × ${log.quantity} 已批准`,
+      time: new Date(),
+      relatedId: log.id,
+    });
+
+    if (newAvailable <= equip.warningThreshold) {
       addAlert({
         id: generateId(),
         type: 'equipment',
         level: 'medium',
         title: '库存预警',
-        description: `${selectedItem.name} 库存不足，当前仅剩 ${newAvailable} ${selectedItem.unit}`,
+        description: `${equip.name} 库存不足，当前仅剩 ${newAvailable} ${equip.unit}`,
         time: new Date(),
         isRead: false,
-        relatedId: selectedItem.id,
+        relatedId: equip.id,
       });
     }
 
-    setSelectedEquipment({ ...selectedItem, available: newAvailable });
-    setFormData({ quantity: 1, personnelId: '', remark: '', restockQuantity: 0 });
-    setShowBorrowModal(false);
+    setShowApprovalDetailModal(false);
+    setSelectedApprovalLog(null);
+  };
+
+  const handleReject = () => {
+    if (!selectedApprovalLog) return;
+    
+    rejectEquipmentLog(selectedApprovalLog.id, 'p1', rejectReason);
+
+    addActivityLog({
+      id: generateId(),
+      type: 'equipment',
+      title: '装备领用审批拒绝',
+      description: `${getPersonnelById(selectedApprovalLog.personnelId)?.name} 的领用申请已被拒绝，原因：${rejectReason}`,
+      time: new Date(),
+      relatedId: selectedApprovalLog.id,
+    });
+
+    setShowApprovalDetailModal(false);
+    setSelectedApprovalLog(null);
+    setRejectReason('');
   };
 
   const handleReturn = () => {
     if (!selectedItem || !formData.personnelId || formData.quantity <= 0) return;
-    const borrowed = equipmentLogs.filter(l => l.equipmentId === selectedItem.id && l.type === 'borrow' && l.personnelId === formData.personnelId).reduce((sum, l) => sum + l.quantity, 0);
+    const borrowed = equipmentLogs.filter(l => l.equipmentId === selectedItem.id && l.type === 'borrow' && l.personnelId === formData.personnelId && l.status === 'completed').reduce((sum, l) => sum + l.quantity, 0);
     const returned = equipmentLogs.filter(l => l.equipmentId === selectedItem.id && l.type === 'return' && l.personnelId === formData.personnelId).reduce((sum, l) => sum + l.quantity, 0);
     if (formData.quantity > (borrowed - returned)) return;
 
@@ -132,7 +183,7 @@ export default function Equipment() {
     });
 
     setSelectedEquipment({ ...selectedItem, available: newAvailable });
-    setFormData({ quantity: 1, personnelId: '', remark: '', restockQuantity: 0 });
+    setFormData({ quantity: 1, personnelId: '', remark: '', restockQuantity: 0, stocktakeActualQuantity: 0, stocktakeDifferenceReason: '' });
     setShowReturnModal(false);
   };
 
@@ -166,8 +217,81 @@ export default function Equipment() {
     });
 
     setSelectedEquipment({ ...selectedItem, total: newTotal, available: newAvailable });
-    setFormData({ quantity: 1, personnelId: '', remark: '', restockQuantity: 0 });
+    setFormData({ quantity: 1, personnelId: '', remark: '', restockQuantity: 0, stocktakeActualQuantity: 0, stocktakeDifferenceReason: '' });
     setShowRestockModal(false);
+  };
+
+  const handleStocktake = () => {
+    if (!selectedItem) return;
+
+    const expectedQuantity = selectedItem.available;
+    const actualQuantity = formData.stocktakeActualQuantity;
+    const difference = actualQuantity - expectedQuantity;
+
+    const record: StocktakeRecord = {
+      id: generateId(),
+      equipmentId: selectedItem.id,
+      operatorId: 'p1',
+      time: new Date(),
+      expectedQuantity,
+      actualQuantity,
+      difference,
+      differenceReason: formData.stocktakeDifferenceReason,
+      status: difference !== 0 ? 'pending' : 'adjusted',
+    };
+
+    addStocktakeRecord(record);
+
+    if (difference !== 0) {
+      const log: EquipmentLog = {
+        id: generateId(),
+        equipmentId: selectedItem.id,
+        type: 'stocktake',
+        quantity: Math.abs(difference),
+        personnelId: 'p1',
+        time: new Date(),
+        status: 'completed',
+        remark: `盘点差异：${difference > 0 ? '盘盈' : '盘亏'} ${Math.abs(difference)} ${selectedItem.unit}，原因：${formData.stocktakeDifferenceReason || '未填写'}`,
+      };
+      addEquipmentLog(log);
+
+      addActivityLog({
+        id: generateId(),
+        type: 'equipment',
+        title: '库存盘点差异',
+        description: `${selectedItem.name} 盘点差异：${difference > 0 ? '+' : ''}${difference} ${selectedItem.unit}`,
+        time: new Date(),
+        relatedId: record.id,
+      });
+    } else {
+      addActivityLog({
+        id: generateId(),
+        type: 'equipment',
+        title: '库存盘点完成',
+        description: `${selectedItem.name} 盘点完成，账实相符`,
+        time: new Date(),
+        relatedId: record.id,
+      });
+    }
+
+    setFormData({ quantity: 1, personnelId: '', remark: '', restockQuantity: 0, stocktakeActualQuantity: 0, stocktakeDifferenceReason: '' });
+    setShowStocktakeModal(false);
+  };
+
+  const handleAdjustStock = (record: StocktakeRecord) => {
+    adjustStockAfterStocktake(record.id);
+
+    const equip = getEquipmentById(record.equipmentId);
+    if (equip) {
+      addActivityLog({
+        id: generateId(),
+        type: 'equipment',
+        title: '库存调整完成',
+        description: `${equip.name} 已根据盘点结果调整库存`,
+        time: new Date(),
+        relatedId: record.id,
+      });
+    }
   };
 
   const handleClick = (item: Equipment) => {
@@ -176,22 +300,37 @@ export default function Equipment() {
   };
 
   const getItemLogs = (itemId: string) => {
-    return useAppStore.getState().getEquipmentLogsByEquipment(itemId);
+    return getEquipmentLogsByEquipment(itemId);
   };
 
   const getPersonnelBorrowed = (personnelId: string, equipmentId: string) => {
-    const borrowed = equipmentLogs.filter(l => l.equipmentId === equipmentId && l.type === 'borrow' && l.personnelId === personnelId).reduce((sum, l) => sum + l.quantity, 0);
+    const borrowed = equipmentLogs.filter(l => l.equipmentId === equipmentId && l.type === 'borrow' && l.personnelId === personnelId && l.status === 'completed').reduce((sum, l) => sum + l.quantity, 0);
     const returned = equipmentLogs.filter(l => l.equipmentId === equipmentId && l.type === 'return' && l.personnelId === personnelId).reduce((sum, l) => sum + l.quantity, 0);
     return borrowed - returned;
   };
 
+  const getEquipmentStocktakeRecords = (equipmentId: string) => {
+    return stocktakeRecords.filter(r => r.equipmentId === equipmentId).sort((a, b) => b.time.getTime() - a.time.getTime());
+  };
+
+  const getStatusBadge = (status: string) => {
+    switch (status) {
+      case 'pending': return 'badge-yellow';
+      case 'approved': return 'badge-green';
+      case 'rejected': return 'badge-red';
+      case 'completed': return 'badge-green';
+      default: return 'badge-gray';
+    }
+  };
+
   return (
     <div className="space-y-6">
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
         <StatCard title="装备总数" value={total} icon={Package} color="blue" className="animate-stagger-1" />
         <StatCard title="可用数量" value={available} icon={Briefcase} color="green" className="animate-stagger-2" />
-        <StatCard title="库存预警" value={lowStock.length} icon={AlertTriangle} color="red" className="animate-stagger-3" />
-        <StatCard title="今日流转" value={todayLogs.length} icon={ArrowUpDown} color="purple" className="animate-stagger-4" />
+        <StatCard title="待审批" value={pendingApprovals.length} icon={Clock} color="orange" className="animate-stagger-3" />
+        <StatCard title="库存预警" value={lowStock.length} icon={AlertTriangle} color="red" className="animate-stagger-4" />
+        <StatCard title="今日流转" value={todayLogs.length} icon={ArrowUpDown} color="purple" className="animate-stagger-5" />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
@@ -225,10 +364,15 @@ export default function Equipment() {
               <div className="flex flex-wrap items-center justify-between gap-4">
                 <div className="flex items-center gap-4">
                   <h3 className="text-lg font-semibold text-white">物资装备管理</h3>
-                  <div className="flex gap-2">
-                    {(['ledger', 'records', 'warnings'] as const).map(tab => (
-                      <button key={tab} className={cn('px-3 py-1.5 rounded-lg text-sm transition-colors', activeTab === tab ? 'bg-primary-600 text-white' : 'bg-dark-700 text-dark-300 hover:text-white')} onClick={() => setActiveTab(tab)}>
-                        {tab === 'ledger' ? '装备台账' : tab === 'records' ? '领用记录' : '库存预警'}
+                  <div className="flex gap-2 flex-wrap">
+                    {(['ledger', 'records', 'approvals', 'stocktake', 'warnings'] as const).map(tab => (
+                      <button key={tab} className={cn('px-3 py-1.5 rounded-lg text-sm transition-colors flex items-center gap-1.5', activeTab === tab ? 'bg-primary-600 text-white' : 'bg-dark-700 text-dark-300 hover:text-white')} onClick={() => setActiveTab(tab)}>
+                        {tab === 'ledger' && <Package className="w-3.5 h-3.5" />}
+                        {tab === 'records' && <FileText className="w-3.5 h-3.5" />}
+                        {tab === 'approvals' && <Handshake className="w-3.5 h-3.5" />}
+                        {tab === 'stocktake' && <ClipboardCheck className="w-3.5 h-3.5" />}
+                        {tab === 'warnings' && <AlertTriangle className="w-3.5 h-3.5" />}
+                        {tab === 'ledger' ? '装备台账' : tab === 'records' ? '领用记录' : tab === 'approvals' ? `待审批(${pendingApprovals.length})` : tab === 'stocktake' ? '库存盘点' : '库存预警'}
                       </button>
                     ))}
                   </div>
@@ -283,19 +427,99 @@ export default function Equipment() {
                     <tr><th className="table-header">装备</th><th className="table-header">类型</th><th className="table-header">数量</th><th className="table-header">领用人</th><th className="table-header">时间</th><th className="table-header">状态</th><th className="table-header">备注</th></tr>
                   </thead>
                   <tbody className="divide-y divide-dark-700">
-                    {[...equipmentLogs].sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime()).slice(0, 30).map(log => (
+                    {[...equipmentLogs].sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime()).slice(0, 50).map(log => (
                       <tr key={log.id} className="hover:bg-dark-700/30 transition-colors">
                         <td className="table-cell"><div className="flex items-center gap-2"><div className="w-8 h-8 rounded-lg bg-primary-500/20 flex items-center justify-center"><Package className="w-4 h-4 text-primary-400" /></div><span className="text-white">{getEquipmentById(log.equipmentId)?.name}</span></div></td>
-                        <td className="table-cell"><span className={`badge ${log.type === 'borrow' ? 'badge-blue' : 'badge-green'}`}>{log.type === 'borrow' ? '领用' : '归还'}</span></td>
+                        <td className="table-cell"><span className={`badge ${log.type === 'borrow' ? 'badge-blue' : log.type === 'return' ? 'badge-green' : 'badge-purple'}`}>{log.type === 'borrow' ? '领用' : log.type === 'return' ? '归还' : '盘点'}</span></td>
                         <td className="table-cell text-white font-mono">{log.quantity}</td>
                         <td className="table-cell"><div className="flex items-center gap-2"><img src={getPersonnelById(log.personnelId)?.avatar} alt="" className="w-6 h-6 rounded-full bg-dark-700" /><span className="text-dark-300">{getPersonnelById(log.personnelId)?.name}</span></div></td>
                         <td className="table-cell text-dark-400 text-xs">{formatDate(new Date(log.time))} {formatTime(new Date(log.time))}</td>
-                        <td className="table-cell"><span className={`badge ${getStatusBgColor(log.status)}`}>{getStatusText(log.status)}</span></td>
+                        <td className="table-cell"><span className={`badge ${getStatusBadge(log.status)}`}>{getStatusText(log.status)}</span></td>
                         <td className="table-cell text-dark-400 text-sm max-w-[150px] truncate">{log.remark || '-'}</td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
+              </div>
+            )}
+
+            {activeTab === 'approvals' && (
+              <div className="p-4">
+                <div className="space-y-3">
+                  {pendingApprovals.length === 0 ? (
+                    <div className="text-center py-12 text-dark-400"><Handshake className="w-12 h-12 mx-auto mb-3 opacity-50" /><p>暂无待审批申请</p></div>
+                  ) : (
+                    pendingApprovals.map(log => {
+                      const equip = getEquipmentById(log.equipmentId);
+                      const person = getPersonnelById(log.personnelId);
+                      return (
+                        <div key={log.id} className="bg-dark-900/50 border border-dark-700 rounded-xl p-4 hover:border-primary-500/50 transition-colors cursor-pointer" onClick={() => { setSelectedApprovalLog(log); setShowApprovalDetailModal(true); }}>
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-4">
+                              <div className="w-12 h-12 rounded-xl bg-warning-500/20 flex items-center justify-center"><Clock className="w-6 h-6 text-warning-400" /></div>
+                              <div>
+                                <p className="text-white font-medium">{person?.name} 申请领用 {equip?.name}</p>
+                                <p className="text-sm text-dark-400 mt-0.5">数量: {log.quantity} {equip?.unit} · {formatTime(log.time)}</p>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className="badge badge-yellow">待审批</span>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+            )}
+
+            {activeTab === 'stocktake' && (
+              <div className="p-4">
+                <div className="space-y-3">
+                  {stocktakeRecords.length === 0 ? (
+                    <div className="text-center py-12 text-dark-400"><ClipboardCheck className="w-12 h-12 mx-auto mb-3 opacity-50" /><p>暂无盘点记录</p></div>
+                  ) : (
+                    [...stocktakeRecords].sort((a, b) => b.time.getTime() - a.time.getTime()).map(record => {
+                      const equip = getEquipmentById(record.equipmentId);
+                      const operator = getPersonnelById(record.operatorId);
+                      return (
+                        <div key={record.id} className="bg-dark-900/50 border border-dark-700 rounded-xl p-4">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-4">
+                              <div className={cn('w-12 h-12 rounded-xl flex items-center justify-center', record.difference === 0 ? 'bg-success-500/20' : record.status === 'adjusted' ? 'bg-primary-500/20' : 'bg-warning-500/20')}>
+                                {record.difference === 0 ? <CheckCircle className="w-6 h-6 text-success-400" /> : <ClipboardCheck className={cn('w-6 h-6', record.status === 'adjusted' ? 'text-primary-400' : 'text-warning-400')} />}
+                              </div>
+                              <div>
+                                <p className="text-white font-medium">{equip?.name} 盘点</p>
+                                <p className="text-sm text-dark-400 mt-0.5">
+                                  账存: {record.expectedQuantity} · 实存: {record.actualQuantity} · 
+                                  <span className={cn('ml-1', record.difference > 0 ? 'text-success-400' : record.difference < 0 ? 'text-danger-400' : 'text-dark-400')}>
+                                    差异: {record.difference > 0 ? '+' : ''}{record.difference}
+                                  </span>
+                                </p>
+                                <p className="text-xs text-dark-500 mt-0.5">操作人: {operator?.name} · {formatTime(record.time)}</p>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className={`badge ${record.difference === 0 ? 'badge-green' : record.status === 'adjusted' ? 'badge-blue' : 'badge-yellow'}`}>
+                                {record.difference === 0 ? '账实相符' : record.status === 'adjusted' ? '已调整' : '待调整'}
+                              </span>
+                              {record.difference !== 0 && record.status === 'pending' && (
+                                <button onClick={(e) => { e.stopPropagation(); handleAdjustStock(record); }} className="btn-primary text-xs py-1 px-3">
+                                  调整库存
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                          {record.differenceReason && (
+                            <p className="text-xs text-dark-400 mt-2 pt-2 border-t border-dark-700">差异原因: {record.differenceReason}</p>
+                          )}
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
               </div>
             )}
 
@@ -348,13 +572,39 @@ export default function Equipment() {
               <div className="w-full h-3 bg-dark-700 rounded-full overflow-hidden"><div className={cn('h-full rounded-full transition-all', getStockColor(selectedItem))} style={{ width: `${getStockProgress(selectedItem)}%` }} /></div>
               <div className="flex justify-between mt-2 text-sm"><span className="text-dark-400">使用率: {100 - getStockProgress(selectedItem)}%</span><span className="text-white font-medium">{getStockProgress(selectedItem)}% 可用</span></div>
             </div>
+
+            <div>
+              <h5 className="text-lg font-semibold text-white mb-3">盘点记录</h5>
+              <div className="space-y-2 max-h-32 overflow-y-auto">
+                {getEquipmentStocktakeRecords(selectedItem.id).slice(0, 5).map((record: StocktakeRecord) => (
+                  <div key={record.id} className="bg-dark-900 p-3 rounded-lg flex items-center justify-between">
+                    <div>
+                      <p className="text-sm text-white">
+                        账存 {record.expectedQuantity} · 实存 {record.actualQuantity}
+                        <span className={cn('ml-2', record.difference > 0 ? 'text-success-400' : record.difference < 0 ? 'text-danger-400' : 'text-dark-400')}>
+                          ({record.difference > 0 ? '+' : ''}{record.difference})
+                        </span>
+                      </p>
+                      <p className="text-xs text-dark-400 mt-0.5">{formatTime(record.time)}</p>
+                    </div>
+                    <span className={`badge ${record.difference === 0 ? 'badge-green' : record.status === 'adjusted' ? 'badge-blue' : 'badge-yellow'} text-xs`}>
+                      {record.difference === 0 ? '相符' : record.status === 'adjusted' ? '已调整' : '待调整'}
+                    </span>
+                  </div>
+                ))}
+                {getEquipmentStocktakeRecords(selectedItem.id).length === 0 && (
+                  <p className="text-center text-dark-500 py-4">暂无盘点记录</p>
+                )}
+              </div>
+            </div>
+
             <div>
               <h5 className="text-lg font-semibold text-white mb-3">近期领用记录</h5>
-              <div className="space-y-2 max-h-48 overflow-y-auto">
+              <div className="space-y-2 max-h-32 overflow-y-auto">
                 {getItemLogs(selectedItem.id).slice(0, 5).map(log => (
                   <div key={log.id} className="flex items-center justify-between bg-dark-900 p-3 rounded-lg">
-                    <div className="flex items-center gap-3"><img src={getPersonnelById(log.personnelId)?.avatar} alt="" className="w-8 h-8 rounded-full bg-dark-700" /><div><p className="text-white">{getPersonnelById(log.personnelId)?.name} {log.type === 'borrow' ? '领用' : '归还'} {log.quantity} {selectedItem.unit}</p><p className="text-xs text-dark-400">{log.remark || '无备注'}</p></div></div>
-                    <div className="text-right"><span className={`badge ${getStatusBgColor(log.status)}`}>{getStatusText(log.status)}</span><p className="text-xs text-dark-500 mt-1">{formatDate(new Date(log.time))} {formatTime(new Date(log.time))}</p></div>
+                    <div className="flex items-center gap-3"><img src={getPersonnelById(log.personnelId)?.avatar} alt="" className="w-8 h-8 rounded-full bg-dark-700" /><div><p className="text-white">{getPersonnelById(log.personnelId)?.name} {log.type === 'borrow' ? '领用' : log.type === 'return' ? '归还' : '盘点'} {log.quantity} {selectedItem.unit}</p><p className="text-xs text-dark-400">{log.remark || '无备注'}</p></div></div>
+                    <div className="text-right"><span className={`badge ${getStatusBadge(log.status)}`}>{getStatusText(log.status)}</span><p className="text-xs text-dark-500 mt-1">{formatDate(new Date(log.time))} {formatTime(new Date(log.time))}</p></div>
                   </div>
                 ))}
                 {getItemLogs(selectedItem.id).length === 0 && (
@@ -366,16 +616,96 @@ export default function Equipment() {
               <button onClick={() => { setFormData(prev => ({ ...prev, quantity: 1, personnelId: '' })); setShowBorrowModal(true); }} disabled={selectedItem.available <= 0} className="btn-primary flex-1 disabled:opacity-50 disabled:cursor-not-allowed">领用登记</button>
               <button onClick={() => { setFormData(prev => ({ ...prev, quantity: 1, personnelId: '' })); setShowReturnModal(true); }} className="btn-success flex-1">归还登记</button>
               <button onClick={() => { setFormData(prev => ({ ...prev, restockQuantity: 0 })); setShowRestockModal(true); }} className="btn-outline">补充库存</button>
+              <button onClick={() => { setFormData(prev => ({ ...prev, stocktakeActualQuantity: selectedItem.available, stocktakeDifferenceReason: '' })); setShowStocktakeModal(true); }} className="btn-outline">盘点</button>
             </div>
           </div>
         )}
       </Modal>
 
-      <Modal isOpen={showBorrowModal} onClose={() => { setShowBorrowModal(false); setFormData({ quantity: 1, personnelId: '', remark: '', restockQuantity: 0 }); }} title="装备领用登记" size="md">
+      <Modal isOpen={showApprovalDetailModal} onClose={() => { setShowApprovalDetailModal(false); setSelectedApprovalLog(null); setRejectReason(''); }} title="审批领用申请" size="md">
+        {selectedApprovalLog && (
+          <div className="space-y-4">
+            <div className="bg-dark-900 p-4 rounded-lg">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <p className="text-xs text-dark-400 mb-1">装备名称</p>
+                  <p className="text-white font-medium">{getEquipmentById(selectedApprovalLog.equipmentId)?.name}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-dark-400 mb-1">申请数量</p>
+                  <p className="text-white font-mono">{selectedApprovalLog.quantity} {getEquipmentById(selectedApprovalLog.equipmentId)?.unit}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-dark-400 mb-1">申请人</p>
+                  <div className="flex items-center gap-2">
+                    <img src={getPersonnelById(selectedApprovalLog.personnelId)?.avatar} alt="" className="w-6 h-6 rounded-full bg-dark-700" />
+                    <span className="text-white">{getPersonnelById(selectedApprovalLog.personnelId)?.name}</span>
+                  </div>
+                </div>
+                <div>
+                  <p className="text-xs text-dark-400 mb-1">申请时间</p>
+                  <p className="text-white">{formatTime(selectedApprovalLog.time)}</p>
+                </div>
+              </div>
+              {selectedApprovalLog.remark && (
+                <div className="mt-4 pt-4 border-t border-dark-700">
+                  <p className="text-xs text-dark-400 mb-1">申请备注</p>
+                  <p className="text-white">{selectedApprovalLog.remark}</p>
+                </div>
+              )}
+            </div>
+
+            <div className="bg-warning-500/10 border border-warning-500/30 p-4 rounded-lg">
+              <p className="text-sm text-warning-400 flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4" />
+                当前库存: {getEquipmentById(selectedApprovalLog.equipmentId)?.available} {getEquipmentById(selectedApprovalLog.equipmentId)?.unit}
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-dark-300 mb-2">拒绝原因（选填）</label>
+              <textarea
+                value={rejectReason}
+                onChange={(e) => setRejectReason(e.target.value)}
+                placeholder="如拒绝请填写原因..."
+                rows={2}
+                className="w-full px-4 py-2 bg-dark-900 border border-dark-600 rounded-lg text-white placeholder-dark-500 focus:outline-none focus:ring-2 focus:ring-primary-500 resize-none"
+              />
+            </div>
+
+            <div className="flex gap-3 pt-4 border-t border-dark-700">
+              <button
+                onClick={() => handleApprove(selectedApprovalLog)}
+                disabled={selectedApprovalLog.quantity > (getEquipmentById(selectedApprovalLog.equipmentId)?.available || 0)}
+                className="btn-success flex-1 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <Check className="w-4 h-4" />
+                通过
+              </button>
+              <button
+                onClick={handleReject}
+                className="btn-danger flex-1 flex items-center justify-center gap-2"
+              >
+                <X className="w-4 h-4" />
+                拒绝
+              </button>
+              <button
+                onClick={() => { setShowApprovalDetailModal(false); setSelectedApprovalLog(null); setRejectReason(''); }}
+                className="btn-outline flex-1"
+              >
+                取消
+              </button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      <Modal isOpen={showBorrowModal} onClose={() => { setShowBorrowModal(false); setFormData({ quantity: 1, personnelId: '', remark: '', restockQuantity: 0, stocktakeActualQuantity: 0, stocktakeDifferenceReason: '' }); }} title="装备领用登记" size="md">
         <div className="space-y-4">
           <div className="bg-primary-500/10 border border-primary-500/30 rounded-lg p-4">
             <p className="text-white font-medium">{selectedItem?.name}</p>
             <p className="text-sm text-dark-400">当前可用: {selectedItem?.available} {selectedItem?.unit}</p>
+            <p className="text-xs text-warning-400 mt-1 flex items-center gap-1"><Clock className="w-3 h-3" />提交后需管理员审批</p>
           </div>
 
           <div>
@@ -429,13 +759,13 @@ export default function Equipment() {
           </div>
 
           <div className="flex gap-3 pt-4 border-t border-dark-700">
-            <button onClick={handleBorrow} disabled={!formData.personnelId || formData.quantity <= 0 || formData.quantity > (selectedItem?.available || 0)} className="btn-primary flex-1 disabled:opacity-50 disabled:cursor-not-allowed">确认领用</button>
-            <button onClick={() => { setShowBorrowModal(false); setFormData({ quantity: 1, personnelId: '', remark: '', restockQuantity: 0 }); }} className="btn-outline flex-1">取消</button>
+            <button onClick={handleBorrow} disabled={!formData.personnelId || formData.quantity <= 0 || formData.quantity > (selectedItem?.available || 0)} className="btn-primary flex-1 disabled:opacity-50 disabled:cursor-not-allowed">提交申请</button>
+            <button onClick={() => { setShowBorrowModal(false); setFormData({ quantity: 1, personnelId: '', remark: '', restockQuantity: 0, stocktakeActualQuantity: 0, stocktakeDifferenceReason: '' }); }} className="btn-outline flex-1">取消</button>
           </div>
         </div>
       </Modal>
 
-      <Modal isOpen={showReturnModal} onClose={() => { setShowReturnModal(false); setFormData({ quantity: 1, personnelId: '', remark: '', restockQuantity: 0 }); }} title="装备归还登记" size="md">
+      <Modal isOpen={showReturnModal} onClose={() => { setShowReturnModal(false); setFormData({ quantity: 1, personnelId: '', remark: '', restockQuantity: 0, stocktakeActualQuantity: 0, stocktakeDifferenceReason: '' }); }} title="装备归还登记" size="md">
         <div className="space-y-4">
           <div className="bg-success-500/10 border border-success-500/30 rounded-lg p-4">
             <p className="text-white font-medium">{selectedItem?.name}</p>
@@ -499,12 +829,12 @@ export default function Equipment() {
 
           <div className="flex gap-3 pt-4 border-t border-dark-700">
             <button onClick={handleReturn} disabled={!formData.personnelId || formData.quantity <= 0} className="btn-success flex-1 disabled:opacity-50 disabled:cursor-not-allowed">确认归还</button>
-            <button onClick={() => { setShowReturnModal(false); setFormData({ quantity: 1, personnelId: '', remark: '', restockQuantity: 0 }); }} className="btn-outline flex-1">取消</button>
+            <button onClick={() => { setShowReturnModal(false); setFormData({ quantity: 1, personnelId: '', remark: '', restockQuantity: 0, stocktakeActualQuantity: 0, stocktakeDifferenceReason: '' }); }} className="btn-outline flex-1">取消</button>
           </div>
         </div>
       </Modal>
 
-      <Modal isOpen={showRestockModal} onClose={() => { setShowRestockModal(false); setFormData({ quantity: 1, personnelId: '', remark: '', restockQuantity: 0 }); }} title="库存补充" size="md">
+      <Modal isOpen={showRestockModal} onClose={() => { setShowRestockModal(false); setFormData({ quantity: 1, personnelId: '', remark: '', restockQuantity: 0, stocktakeActualQuantity: 0, stocktakeDifferenceReason: '' }); }} title="库存补充" size="md">
         <div className="space-y-4">
           <div className="bg-warning-500/10 border border-warning-500/30 rounded-lg p-4">
             <p className="text-white font-medium">{selectedItem?.name}</p>
@@ -528,9 +858,64 @@ export default function Equipment() {
 
           <div className="flex gap-3 pt-4 border-t border-dark-700">
             <button onClick={handleRestock} disabled={formData.restockQuantity <= 0} className="btn-primary flex-1 disabled:opacity-50 disabled:cursor-not-allowed">确认补充</button>
-            <button onClick={() => { setShowRestockModal(false); setFormData({ quantity: 1, personnelId: '', remark: '', restockQuantity: 0 }); }} className="btn-outline flex-1">取消</button>
+            <button onClick={() => { setShowRestockModal(false); setFormData({ quantity: 1, personnelId: '', remark: '', restockQuantity: 0, stocktakeActualQuantity: 0, stocktakeDifferenceReason: '' }); }} className="btn-outline flex-1">取消</button>
           </div>
         </div>
+      </Modal>
+
+      <Modal isOpen={showStocktakeModal} onClose={() => { setShowStocktakeModal(false); setFormData({ quantity: 1, personnelId: '', remark: '', restockQuantity: 0, stocktakeActualQuantity: 0, stocktakeDifferenceReason: '' }); }} title="库存盘点" size="md">
+        {selectedItem && (
+          <div className="space-y-4">
+            <div className="bg-dark-900 p-4 rounded-lg">
+              <p className="text-white font-medium">{selectedItem.name}</p>
+              <p className="text-sm text-dark-400 mt-1">系统账面库存: <span className="text-primary-400 font-mono">{selectedItem.available} {selectedItem.unit}</span></p>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-dark-300 mb-2">实际盘点数量 *</label>
+              <div className="flex items-center gap-4">
+                <button onClick={() => setFormData(prev => ({ ...prev, stocktakeActualQuantity: Math.max(0, prev.stocktakeActualQuantity - 1) }))} className="w-10 h-10 rounded-lg bg-dark-700 flex items-center justify-center hover:bg-dark-600 transition-colors">
+                  <Minus className="w-4 h-4 text-white" />
+                </button>
+                <input type="number" min={0} value={formData.stocktakeActualQuantity} onChange={e => setFormData(prev => ({ ...prev, stocktakeActualQuantity: Math.max(0, parseInt(e.target.value) || 0) }))} className="w-32 text-center px-4 py-2 bg-dark-900 border border-dark-600 rounded-lg text-white font-mono text-xl focus:outline-none focus:ring-2 focus:ring-primary-500" />
+                <button onClick={() => setFormData(prev => ({ ...prev, stocktakeActualQuantity: prev.stocktakeActualQuantity + 1 }))} className="w-10 h-10 rounded-lg bg-dark-700 flex items-center justify-center hover:bg-dark-600 transition-colors">
+                  <Plus className="w-4 h-4 text-white" />
+                </button>
+                <span className="text-dark-400">{selectedItem.unit}</span>
+              </div>
+            </div>
+
+            {formData.stocktakeActualQuantity !== selectedItem.available && (
+              <div className={cn('p-4 rounded-lg border', formData.stocktakeActualQuantity > selectedItem.available ? 'bg-success-500/10 border-success-500/30' : 'bg-danger-500/10 border-danger-500/30')}>
+                <p className={cn('text-sm font-medium flex items-center gap-2', formData.stocktakeActualQuantity > selectedItem.available ? 'text-success-400' : 'text-danger-400')}>
+                  <AlertTriangle className="w-4 h-4" />
+                  盘点差异: {formData.stocktakeActualQuantity > selectedItem.available ? '盘盈' : '盘亏'} {Math.abs(formData.stocktakeActualQuantity - selectedItem.available)} {selectedItem.unit}
+                </p>
+              </div>
+            )}
+
+            {formData.stocktakeActualQuantity !== selectedItem.available && (
+              <div>
+                <label className="block text-sm font-medium text-dark-300 mb-2">差异原因 *</label>
+                <textarea
+                  value={formData.stocktakeDifferenceReason}
+                  onChange={e => setFormData(prev => ({ ...prev, stocktakeDifferenceReason: e.target.value }))}
+                  placeholder="请输入差异原因..."
+                  rows={2}
+                  className="w-full px-4 py-2 bg-dark-900 border border-dark-600 rounded-lg text-white placeholder-dark-500 focus:outline-none focus:ring-2 focus:ring-primary-500 resize-none"
+                />
+              </div>
+            )}
+
+            <div className="flex gap-3 pt-4 border-t border-dark-700">
+              <button onClick={handleStocktake} className="btn-primary flex-1 disabled:opacity-50 disabled:cursor-not-allowed">
+                <ClipboardCheck className="w-4 h-4 inline mr-1" />
+                确认盘点
+              </button>
+              <button onClick={() => { setShowStocktakeModal(false); setFormData({ quantity: 1, personnelId: '', remark: '', restockQuantity: 0, stocktakeActualQuantity: 0, stocktakeDifferenceReason: '' }); }} className="btn-outline flex-1">取消</button>
+            </div>
+          </div>
+        )}
       </Modal>
     </div>
   );

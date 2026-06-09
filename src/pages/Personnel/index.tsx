@@ -1,8 +1,8 @@
 import { useState } from 'react';
-import { Users, Search, Filter, Plus, Phone, MapPin, Clock, CheckCircle, XCircle, UserPlus, LogIn, ArrowRightLeft } from 'lucide-react';
+import { Users, Search, Filter, Plus, Phone, MapPin, Clock, CheckCircle, XCircle, UserPlus, LogIn, ArrowRightLeft, AlertTriangle, Shield, Package, Handshake, UserCheck, X } from 'lucide-react';
 import { useAppStore } from '@/store';
-import { getStatusColor, getStatusBgColor, getStatusText, formatTime, formatDate, generateId, cn } from '@/utils';
-import type { Personnel } from '@/types';
+import { getStatusColor, getStatusBgColor, getStatusText, formatTime, formatDate, generateId, cn, getLevelBgColor, getLevelText } from '@/utils';
+import type { Personnel, ShiftHandover, HiddenDanger, Incident } from '@/types';
 import Modal from '@/components/Modal';
 import StatCard from '@/components/StatCard';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts';
@@ -13,11 +13,20 @@ export default function Personnel() {
   const {
     personnel,
     attendance,
+    hiddenDangers,
+    incidents,
+    shiftHandovers,
     getPersonnelAttendance,
     getAreaById,
+    getPersonnelById,
     updatePersonnel,
     addAttendance,
     addActivityLog,
+    addShiftHandover,
+    getDangersByHandler,
+    getIncidentsByHandler,
+    updateHiddenDanger,
+    updateIncident,
   } = useAppStore();
 
   const [searchTerm, setSearchTerm] = useState('');
@@ -27,8 +36,11 @@ export default function Personnel() {
   const [showDetailModal, setShowDetailModal] = useState(false);
   const [showSignInModal, setShowSignInModal] = useState(false);
   const [showTransferModal, setShowTransferModal] = useState(false);
+  const [showHandoverModal, setShowHandoverModal] = useState(false);
   const [activeTab, setActiveTab] = useState<'list' | 'attendance'>('list');
   const [selectedAreaId, setSelectedAreaId] = useState('');
+  const [selectedSuccessorId, setSelectedSuccessorId] = useState('');
+  const [handoverRemark, setHandoverRemark] = useState('');
 
   const areas = useAppStore.getState().areas;
 
@@ -46,6 +58,14 @@ export default function Personnel() {
     { name: '休息', value: personnel.filter((p) => p.status === 'rest').length, color: '#EAB308' },
     { name: '离岗', value: personnel.filter((p) => p.status === 'off-duty').length, color: '#64748B' },
   ];
+
+  const onDutyCaptains = personnel.filter(p => p.status !== 'off-duty' && p.position.includes('队长'));
+  const availableSuccessors = selectedPersonnel
+    ? personnel.filter(p => p.id !== selectedPersonnel.id && p.status !== 'off-duty')
+    : [];
+
+  const pendingDangers = selectedPersonnel ? getDangersByHandler(selectedPersonnel.id).filter(d => d.status !== 'resolved') : [];
+  const processingIncidents = selectedPersonnel ? getIncidentsByHandler(selectedPersonnel.id).filter(i => i.status !== 'completed') : [];
 
   const handleSignIn = (person: Personnel, type: 'on' | 'off') => {
     const location = getAreaById(person.areaId)?.name || '未知区域';
@@ -85,6 +105,63 @@ export default function Personnel() {
     setSelectedPersonnel({ ...person, areaId: selectedAreaId });
     setSelectedAreaId('');
     setShowTransferModal(false);
+  };
+
+  const handleHandover = () => {
+    if (!selectedPersonnel || !selectedSuccessorId) return;
+
+    const successor = getPersonnelById(selectedSuccessorId);
+    if (!successor) return;
+
+    const areaIds = [selectedPersonnel.areaId];
+    const pendingDangerIds = pendingDangers.map(d => d.id);
+    const processingIncidentIds = processingIncidents.map(i => i.id);
+
+    const handover: ShiftHandover = {
+      id: generateId(),
+      fromPersonnelId: selectedPersonnel.id,
+      toPersonnelId: selectedSuccessorId,
+      handoverTime: new Date(),
+      areaIds,
+      pendingDangerIds,
+      processingIncidentIds,
+      remark: handoverRemark,
+      status: 'completed',
+    };
+
+    addShiftHandover(handover);
+
+    updatePersonnel(selectedSuccessorId, { areaId: selectedPersonnel.areaId });
+
+    pendingDangers.forEach(danger => {
+      updateHiddenDanger(danger.id, { handlerId: selectedSuccessorId });
+    });
+
+    processingIncidents.forEach(incident => {
+      updateIncident(incident.id, { currentHandlerId: selectedSuccessorId });
+    });
+
+    addActivityLog({
+      id: generateId(),
+      type: 'attendance',
+      title: '交接班完成',
+      description: `${selectedPersonnel.name} 将工作交接给 ${successor.name}`,
+      time: new Date(),
+      relatedId: handover.id,
+    });
+
+    setSelectedPersonnel({ ...selectedPersonnel, status: 'off-duty' });
+    updatePersonnel(selectedPersonnel.id, { status: 'off-duty' });
+
+    setSelectedSuccessorId('');
+    setHandoverRemark('');
+    setShowHandoverModal(false);
+    setShowDetailModal(false);
+  };
+
+  const getPersonnelHandovers = (personnelId: string) => {
+    return shiftHandovers.filter(h => h.fromPersonnelId === personnelId || h.toPersonnelId === personnelId)
+      .sort((a, b) => b.handoverTime.getTime() - a.handoverTime.getTime());
   };
 
   return (
@@ -305,16 +382,32 @@ export default function Personnel() {
                                 签到
                               </button>
                             ) : (
-                              <button
-                                onClick={() => {
-                                  setSelectedPersonnel(person);
-                                  setShowSignInModal(true);
-                                }}
-                                className="btn-outline text-xs py-1 px-2 flex items-center gap-1"
-                              >
-                                <XCircle className="w-3 h-3" />
-                                签退
-                              </button>
+                              <>
+                                <button
+                                  onClick={() => {
+                                    setSelectedPersonnel(person);
+                                    setShowSignInModal(true);
+                                  }}
+                                  className="btn-outline text-xs py-1 px-2 flex items-center gap-1"
+                                >
+                                  <XCircle className="w-3 h-3" />
+                                  签退
+                                </button>
+                                {person.position.includes('队长') && (
+                                  <button
+                                    onClick={() => {
+                                      setSelectedPersonnel(person);
+                                      setSelectedSuccessorId('');
+                                      setHandoverRemark('');
+                                      setShowHandoverModal(true);
+                                    }}
+                                    className="btn-primary text-xs py-1 px-2 flex items-center gap-1"
+                                  >
+                                    <Handshake className="w-3 h-3" />
+                                    交接
+                                  </button>
+                                )}
+                              </>
                             )}
                             <button
                               onClick={() => {
@@ -322,7 +415,7 @@ export default function Personnel() {
                                 setSelectedAreaId(person.areaId);
                                 setShowTransferModal(true);
                               }}
-                              className="btn-primary text-xs py-1 px-2 flex items-center gap-1"
+                              className="btn-outline text-xs py-1 px-2 flex items-center gap-1"
                             >
                               <ArrowRightLeft className="w-3 h-3" />
                               调岗
@@ -420,11 +513,100 @@ export default function Personnel() {
                   {getAreaById(selectedPersonnel.areaId)?.name}
                 </p>
               </div>
+              <div className="bg-dark-900 p-4 rounded-lg">
+                <p className="text-xs text-dark-400 mb-1">待处理隐患</p>
+                <p className="text-warning-400 flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4" />
+                  {pendingDangers.length} 项
+                </p>
+              </div>
+              <div className="bg-dark-900 p-4 rounded-lg">
+                <p className="text-xs text-dark-400 mb-1">处置中事件</p>
+                <p className="text-danger-400 flex items-center gap-2">
+                  <Shield className="w-4 h-4" />
+                  {processingIncidents.length} 起
+                </p>
+              </div>
+            </div>
+
+            {pendingDangers.length > 0 && (
+              <div>
+                <h5 className="text-lg font-semibold text-white mb-3 flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4 text-warning-400" />
+                  待处理隐患
+                </h5>
+                <div className="space-y-2 max-h-32 overflow-y-auto">
+                  {pendingDangers.map((danger: HiddenDanger) => (
+                    <div key={danger.id} className="bg-dark-900 p-3 rounded-lg flex items-center justify-between">
+                      <div>
+                        <p className="text-sm text-white">{danger.description}</p>
+                        <p className="text-xs text-dark-400 mt-1">{getAreaById(danger.areaId)?.name}</p>
+                      </div>
+                      <span className={`badge ${getLevelBgColor(danger.level)} text-xs`}>{getLevelText(danger.level)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {processingIncidents.length > 0 && (
+              <div>
+                <h5 className="text-lg font-semibold text-white mb-3 flex items-center gap-2">
+                  <Shield className="w-4 h-4 text-danger-400" />
+                  处置中事件
+                </h5>
+                <div className="space-y-2 max-h-32 overflow-y-auto">
+                  {processingIncidents.map((incident: Incident) => (
+                    <div key={incident.id} className="bg-dark-900 p-3 rounded-lg flex items-center justify-between">
+                      <div>
+                        <p className="text-sm text-white">{incident.title}</p>
+                        <p className="text-xs text-dark-400 mt-1">{formatTime(incident.reportTime)}</p>
+                      </div>
+                      <span className={`badge ${getLevelBgColor(incident.level)} text-xs`}>{getLevelText(incident.level)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div>
+              <h5 className="text-lg font-semibold text-white mb-3 flex items-center gap-2">
+                <Handshake className="w-4 h-4 text-primary-400" />
+                交接班记录
+              </h5>
+              <div className="space-y-2 max-h-32 overflow-y-auto">
+                {getPersonnelHandovers(selectedPersonnel.id).map((handover: ShiftHandover) => {
+                  const fromPerson = getPersonnelById(handover.fromPersonnelId);
+                  const toPerson = getPersonnelById(handover.toPersonnelId);
+                  const isOutgoing = handover.fromPersonnelId === selectedPersonnel.id;
+                  return (
+                    <div key={handover.id} className="bg-dark-900 p-3 rounded-lg">
+                      <div className="flex items-center justify-between mb-1">
+                        <p className="text-sm text-white">
+                          {isOutgoing ? '交接给' : '承接自'}: {isOutgoing ? toPerson?.name : fromPerson?.name}
+                        </p>
+                        <span className={`badge ${isOutgoing ? 'badge-orange' : 'badge-blue'} text-xs`}>
+                          {isOutgoing ? '交班' : '接班'}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-4 text-xs text-dark-400">
+                        <span>区域: {handover.areaIds.length}个</span>
+                        <span>隐患: {handover.pendingDangerIds.length}项</span>
+                        <span>事件: {handover.processingIncidentIds.length}起</span>
+                      </div>
+                      <p className="text-xs text-dark-500 mt-1">{formatTime(handover.handoverTime)}</p>
+                    </div>
+                  );
+                })}
+                {getPersonnelHandovers(selectedPersonnel.id).length === 0 && (
+                  <p className="text-center text-dark-500 py-4">暂无交接班记录</p>
+                )}
+              </div>
             </div>
 
             <div>
               <h5 className="text-lg font-semibold text-white mb-3">近期签到记录</h5>
-              <div className="space-y-2 max-h-48 overflow-y-auto">
+              <div className="space-y-2 max-h-32 overflow-y-auto">
                 {getPersonnelAttendance(selectedPersonnel.id).slice(0, 5).map((record) => (
                   <div
                     key={record.id}
@@ -461,20 +643,35 @@ export default function Personnel() {
                   签到上岗
                 </button>
               ) : (
-                <button
-                  onClick={() => setShowSignInModal(true)}
-                  className="btn-outline flex-1 flex items-center justify-center gap-2"
-                >
-                  <XCircle className="w-4 h-4" />
-                  签退离岗
-                </button>
+                <>
+                  <button
+                    onClick={() => setShowSignInModal(true)}
+                    className="btn-outline flex-1 flex items-center justify-center gap-2"
+                  >
+                    <XCircle className="w-4 h-4" />
+                    签退离岗
+                  </button>
+                  {selectedPersonnel.position.includes('队长') && (
+                    <button
+                      onClick={() => {
+                        setSelectedSuccessorId('');
+                        setHandoverRemark('');
+                        setShowHandoverModal(true);
+                      }}
+                      className="btn-primary flex-1 flex items-center justify-center gap-2"
+                    >
+                      <Handshake className="w-4 h-4" />
+                      交接班
+                    </button>
+                  )}
+                </>
               )}
               <button
                 onClick={() => {
                   setSelectedAreaId(selectedPersonnel.areaId);
                   setShowTransferModal(true);
                 }}
-                className="btn-primary flex-1 flex items-center justify-center gap-2"
+                className="btn-outline flex-1 flex items-center justify-center gap-2"
               >
                 <ArrowRightLeft className="w-4 h-4" />
                 调整岗位
@@ -613,6 +810,193 @@ export default function Personnel() {
                 onClick={() => {
                   setShowTransferModal(false);
                   setSelectedAreaId('');
+                }}
+                className="btn-outline flex-1"
+              >
+                取消
+              </button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      <Modal
+        isOpen={showHandoverModal}
+        onClose={() => {
+          setShowHandoverModal(false);
+          setSelectedSuccessorId('');
+          setHandoverRemark('');
+        }}
+        title="交接班"
+        size="lg"
+      >
+        {selectedPersonnel && (
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div className="bg-dark-800 p-4 rounded-lg">
+                <p className="text-xs text-dark-400 mb-2">交班人员</p>
+                <div className="flex items-center gap-3">
+                  <img
+                    src={selectedPersonnel.avatar}
+                    alt=""
+                    className="w-12 h-12 rounded-full bg-dark-700"
+                  />
+                  <div>
+                    <p className="text-white font-medium">{selectedPersonnel.name}</p>
+                    <p className="text-xs text-dark-400">{selectedPersonnel.position}</p>
+                  </div>
+                </div>
+              </div>
+              <div className="bg-dark-800 p-4 rounded-lg">
+                <p className="text-xs text-dark-400 mb-2">接班人员</p>
+                {selectedSuccessorId ? (
+                  <div className="flex items-center gap-3">
+                    <img
+                      src={getPersonnelById(selectedSuccessorId)?.avatar}
+                      alt=""
+                      className="w-12 h-12 rounded-full bg-dark-700"
+                    />
+                    <div>
+                      <p className="text-white font-medium">{getPersonnelById(selectedSuccessorId)?.name}</p>
+                      <p className="text-xs text-dark-400">{getPersonnelById(selectedSuccessorId)?.position}</p>
+                    </div>
+                    <button
+                      onClick={() => setSelectedSuccessorId('')}
+                      className="ml-auto p-1 hover:bg-dark-700 rounded"
+                    >
+                      <X className="w-4 h-4 text-dark-400" />
+                    </button>
+                  </div>
+                ) : (
+                  <p className="text-dark-500 text-sm">请选择接班人员</p>
+                )}
+              </div>
+            </div>
+
+            {!selectedSuccessorId && (
+              <div>
+                <label className="block text-sm font-medium text-dark-300 mb-2">选择接班人员</label>
+                <div className="space-y-2 max-h-48 overflow-y-auto">
+                  {availableSuccessors.map((person) => (
+                    <label
+                      key={person.id}
+                      className={cn(
+                        'flex items-center gap-3 p-3 rounded-lg cursor-pointer transition-colors border',
+                        selectedSuccessorId === person.id
+                          ? 'bg-primary-500/20 border-primary-500/50'
+                          : 'bg-dark-800 border-transparent hover:bg-dark-700'
+                      )}
+                    >
+                      <input
+                        type="radio"
+                        name="successor"
+                        value={person.id}
+                        checked={selectedSuccessorId === person.id}
+                        onChange={(e) => setSelectedSuccessorId(e.target.value)}
+                        className="hidden"
+                      />
+                      <img src={person.avatar} alt="" className="w-10 h-10 rounded-full bg-dark-700" />
+                      <div className="flex-1">
+                        <p className="text-white font-medium">{person.name}</p>
+                        <p className="text-xs text-dark-400">{person.position} · {getAreaById(person.areaId)?.name}</p>
+                      </div>
+                      <span className={`badge ${getStatusBgColor(person.status)} text-xs`}>
+                        {getStatusText(person.status)}
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {selectedSuccessorId && (
+              <>
+                <div className="bg-dark-900 p-4 rounded-lg">
+                  <h5 className="text-sm font-semibold text-white mb-3">交接内容</h5>
+                  <div className="grid grid-cols-3 gap-4">
+                    <div className="text-center p-3 bg-dark-800 rounded-lg">
+                      <MapPin className="w-6 h-6 text-primary-400 mx-auto mb-1" />
+                      <p className="text-xl font-bold text-white">{selectedPersonnel.areaId ? 1 : 0}</p>
+                      <p className="text-xs text-dark-400">负责区域</p>
+                    </div>
+                    <div className="text-center p-3 bg-dark-800 rounded-lg">
+                      <AlertTriangle className="w-6 h-6 text-warning-400 mx-auto mb-1" />
+                      <p className="text-xl font-bold text-white">{pendingDangers.length}</p>
+                      <p className="text-xs text-dark-400">待处理隐患</p>
+                    </div>
+                    <div className="text-center p-3 bg-dark-800 rounded-lg">
+                      <Shield className="w-6 h-6 text-danger-400 mx-auto mb-1" />
+                      <p className="text-xl font-bold text-white">{processingIncidents.length}</p>
+                      <p className="text-xs text-dark-400">处置中事件</p>
+                    </div>
+                  </div>
+                </div>
+
+                {pendingDangers.length > 0 && (
+                  <div className="bg-warning-500/10 border border-warning-500/30 p-4 rounded-lg">
+                    <h6 className="text-sm font-medium text-warning-400 mb-2 flex items-center gap-2">
+                      <AlertTriangle className="w-4 h-4" />
+                      待处理隐患清单
+                    </h6>
+                    <div className="space-y-1 max-h-24 overflow-y-auto">
+                      {pendingDangers.map((d: HiddenDanger) => (
+                        <div key={d.id} className="flex items-center justify-between text-sm">
+                          <span className="text-dark-300 truncate">{d.description}</span>
+                          <span className={`badge ${getLevelBgColor(d.level)} text-xs ml-2 flex-shrink-0`}>
+                            {getLevelText(d.level)}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {processingIncidents.length > 0 && (
+                  <div className="bg-danger-500/10 border border-danger-500/30 p-4 rounded-lg">
+                    <h6 className="text-sm font-medium text-danger-400 mb-2 flex items-center gap-2">
+                      <Shield className="w-4 h-4" />
+                      处置中事件清单
+                    </h6>
+                    <div className="space-y-1 max-h-24 overflow-y-auto">
+                      {processingIncidents.map((i: Incident) => (
+                        <div key={i.id} className="flex items-center justify-between text-sm">
+                          <span className="text-dark-300 truncate">{i.title}</span>
+                          <span className={`badge ${getLevelBgColor(i.level)} text-xs ml-2 flex-shrink-0`}>
+                            {getLevelText(i.level)}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <div>
+                  <label className="block text-sm font-medium text-dark-300 mb-2">交接备注</label>
+                  <textarea
+                    value={handoverRemark}
+                    onChange={(e) => setHandoverRemark(e.target.value)}
+                    placeholder="请输入交接备注信息..."
+                    rows={2}
+                    className="w-full px-4 py-2 bg-dark-900 border border-dark-600 rounded-lg text-white placeholder-dark-500 focus:outline-none focus:ring-2 focus:ring-primary-500 resize-none"
+                  />
+                </div>
+              </>
+            )}
+
+            <div className="flex gap-3 pt-4 border-t border-dark-700">
+              <button
+                onClick={handleHandover}
+                disabled={!selectedSuccessorId}
+                className="btn-success flex-1 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <UserCheck className="w-4 h-4" />
+                确认交接
+              </button>
+              <button
+                onClick={() => {
+                  setShowHandoverModal(false);
+                  setSelectedSuccessorId('');
+                  setHandoverRemark('');
                 }}
                 className="btn-outline flex-1"
               >
